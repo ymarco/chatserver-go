@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 )
 
 const (
@@ -60,13 +61,22 @@ func manageUsers(hub UserHub) {
 			delete(hub.activeUsers, user)
 			userDB[user] = Offline
 		case msg := <-hub.broadcastMessage:
-			// TODO handle faliures, maybe
-			for _, control := range hub.activeUsers {
-				control.messages <- msg
-			}
+			go func() {
+				for user, control := range hub.activeUsers {
+					select {
+					case control.messages <- msg:
+					case <-time.After(time.Millisecond * 100):
+						log.Printf("Failed to send msg to user %s\n", user.name)
+					}
+				}
+			}()
 		case <-hub.quit:
-			for _, control := range hub.activeUsers {
-				control.quit <- 1
+			for user, control := range hub.activeUsers {
+				select {
+				case control.quit <- 1:
+				case <-time.After(time.Millisecond * 100):
+					log.Printf("Failed to send quit user %s\n", user.name)
+				}
 			}
 			return
 		}
@@ -155,7 +165,9 @@ func handleConnection(c net.Conn, hub UserHub) {
 retry:
 	for {
 		err, response := promptForLogin(c)
-		if err != nil {
+		if err == io.EOF {
+			return
+		} else if err != nil {
 			log.Printf("Error: %s", err)
 			return
 		}
@@ -166,10 +178,13 @@ retry:
 			fallthrough
 		case WantsToRegister:
 			user, err = promptUsernameAndPassword(c)
-			if err != nil {
+			if err == io.EOF {
+				return
+			} else if err != nil {
 				log.Printf("Error logging in: %s\n", err)
 				return
 			}
+			log.Printf("userDB:%s\n", userDB)
 			status, exists := userDB[user]
 			if response == WantsToLogIn && !exists {
 				c.Write([]byte("Can't login: invalid credentials\n"))
@@ -197,15 +212,16 @@ retry:
 	userInput := make(chan string)
 	eof := make(chan int)
 	go readIntoChan(c, userInput, eof)
+loop:
 	for {
 		select {
 		case line := <-userInput:
 			hub.SendMessage(line, user)
 		case <-eof:
 			// user disconnected
-			break
+			break loop
 		case <-control.quit:
-			break
+			break loop
 		case msg := <-control.messages:
 			c.Write([]byte(msg.sender.name))
 			c.Write([]byte(": "))
@@ -235,17 +251,17 @@ func promptUsernameAndPassword(c net.Conn) (User, error) {
 	r := bufio.NewReader(c)
 	c.Write([]byte("Username: "))
 	name, err := r.ReadString('\n')
-	name = name[0 : len(name)-1]
 
 	if err != nil {
 		return User{"", ""}, err
 	}
+	name = name[0 : len(name)-1]
 	c.Write([]byte("Password: "))
 	pass, err := r.ReadString('\n')
-	pass = pass[0 : len(pass)-1]
 	if err != nil {
 		return User{"", ""}, err
 	}
+	pass = pass[0 : len(pass)-1]
 
 	return User{name, pass}, nil
 }
