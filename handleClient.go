@@ -15,7 +15,7 @@ const (
 	Error
 )
 
-func promptForLogin(c net.Conn) (e error, response int) {
+func PromptForUsernameAndPassword(c net.Conn) (e error, response int) {
 	_, err := c.Write([]byte("Type r to register, l to login\n"))
 	if err != nil {
 		return err, Error
@@ -27,32 +27,74 @@ func promptForLogin(c net.Conn) (e error, response int) {
 	if err != nil {
 		return err, Error
 	}
-	if s == "l\n" {
+	switch s {
+	case "l\n":
 		return nil, WantsToLogIn
-	} else if s == "r\n" {
+	case "r\n":
 		return nil, WantsToRegister
-	} else {
+	default:
 		return nil, Retry
 	}
 }
 
 func handleClient(c net.Conn, hub UserHub) {
-	// assure user that they connected
 	_, err := c.Write([]byte("Connected successfully\n"))
 	if err != nil {
 		log.Printf("Error writing: %s", err)
 		return
 	}
-	// try logging in or registering
-	user := User{"", ""}
+
+	user, err := RegisterOrTryLoggingIn(c)
+	if err == io.EOF {
+		return
+	} else if err != nil {
+		log.Printf("Error: %s", err)
+		return
+	}
+
+	control := NewUserControl()
+	hub.Login(user, control)
+	defer hub.Logout(user)
+	c.Write([]byte("Logged in as "))
+	c.Write([]byte(user.name))
+	c.Write([]byte("\n\n"))
+
+	MainClientLoop(c, hub, user, control)
+}
+
+func MainClientLoop(c net.Conn, hub UserHub, user User, control UserControl) {
+	userInput := make(chan string)
+	eof := make(chan int)
+	go readIntoChan(c, userInput, eof)
+loop:
+	for {
+		select {
+		case line := <-userInput:
+			hub.SendMessage(line, user)
+		case <-eof:
+			// user disconnected
+			break loop
+		case <-control.quit:
+			break loop
+		case msg := <-control.messages:
+			printMsg(c, msg)
+		}
+	}
+}
+
+func printMsg(writer io.Writer, msg Message) {
+	writer.Write([]byte(msg.sender.name))
+	writer.Write([]byte(": "))
+	writer.Write([]byte(msg.msg))
+}
+
+func RegisterOrTryLoggingIn(c net.Conn) (User, error) {
+	user := User{}
 retry:
 	for {
-		err, response := promptForLogin(c)
-		if err == io.EOF {
-			return
-		} else if err != nil {
-			log.Printf("Error: %s", err)
-			return
+		err, response := PromptForUsernameAndPassword(c)
+		if err != nil {
+			return User{}, err
 		}
 		switch response {
 		case Retry:
@@ -61,11 +103,8 @@ retry:
 			fallthrough
 		case WantsToRegister:
 			user, err = promptUsernameAndPassword(c)
-			if err == io.EOF {
-				return
-			} else if err != nil {
-				log.Printf("Error logging in: %s\n", err)
-				return
+			if err != nil {
+				return User{}, err
 			}
 			status, exists := userDB[user]
 			if response == WantsToLogIn && !exists {
@@ -81,35 +120,8 @@ retry:
 			break retry
 		}
 	}
-	// log in
-	control := UserControl{quit: make(chan int),
-		messages: make(chan Message)}
-	hub.Login(user, control)
-	defer hub.Logout(user)
-	c.Write([]byte("Logged in as "))
-	c.Write([]byte(user.name))
-	c.Write([]byte("\n\n"))
-
-	// user is logged in; main loop.
-	userInput := make(chan string)
-	eof := make(chan int)
-	go readIntoChan(c, userInput, eof)
-loop:
-	for {
-		select {
-		case line := <-userInput:
-			hub.SendMessage(line, user)
-		case <-eof:
-			// user disconnected
-			break loop
-		case <-control.quit:
-			break loop
-		case msg := <-control.messages:
-			c.Write([]byte(msg.sender.name))
-			c.Write([]byte(": "))
-			c.Write([]byte(msg.msg))
-		}
-	}
+	// success
+	return user, nil
 }
 
 // Read lines from reader and send them to outputs.
@@ -135,13 +147,13 @@ func promptUsernameAndPassword(c net.Conn) (User, error) {
 	name, err := r.ReadString('\n')
 
 	if err != nil {
-		return User{"", ""}, err
+		return User{}, err
 	}
 	name = name[0 : len(name)-1]
 	c.Write([]byte("Password: "))
 	pass, err := r.ReadString('\n')
 	if err != nil {
-		return User{"", ""}, err
+		return User{}, err
 	}
 	pass = pass[0 : len(pass)-1]
 

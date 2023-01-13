@@ -16,8 +16,14 @@ type OnlineStatus int
 type UserControl struct {
 	onlineStatus OnlineStatus
 	messages     chan Message
-	quit         chan int
+	quit         chan struct{}
 }
+
+func NewUserControl() UserControl {
+	return UserControl{quit: make(chan struct{}),
+		messages: make(chan Message)}
+}
+
 type User struct {
 	name     string
 	password string
@@ -36,7 +42,7 @@ type UserHub struct {
 	logins           chan LoginMessage
 	logouts          chan User
 	broadcastMessage chan Message
-	quit             chan int
+	quit             chan struct{}
 }
 
 func NewUserHub() UserHub {
@@ -44,7 +50,7 @@ func NewUserHub() UserHub {
 		logins:           make(chan LoginMessage),
 		logouts:          make(chan User),
 		broadcastMessage: make(chan Message),
-		quit:             make(chan int),
+		quit:             make(chan struct{}),
 		activeUsers:      make(map[User]UserControl),
 	}
 }
@@ -62,25 +68,31 @@ func manageUsers(hub UserHub) {
 			delete(hub.activeUsers, user)
 			userDB[user] = Offline
 		case msg := <-hub.broadcastMessage:
-			go func() {
-				for user, control := range hub.activeUsers {
-					select {
-					case control.messages <- msg:
-					case <-time.After(time.Millisecond * 100):
-						log.Printf("Failed to send msg to user %s\n", user.name)
-					}
-				}
-			}()
+			for user, control := range hub.activeUsers {
+				go trySendingMessage(control, msg, user)
+			}
 		case <-hub.quit:
 			for user, control := range hub.activeUsers {
-				select {
-				case control.quit <- 1:
-				case <-time.After(time.Millisecond * 100):
-					log.Printf("Failed to send quit user %s\n", user.name)
-				}
+				go tryQuitting(control, user)
 			}
 			return
 		}
+	}
+}
+
+func tryQuitting(control UserControl, user User) {
+	select {
+	case control.quit <- struct{}{}:
+	case <-time.After(time.Millisecond * 100):
+		log.Printf("Failed to send quit user %s\n", user.name)
+	}
+}
+
+func trySendingMessage(control UserControl, msg Message, user User) {
+	select {
+	case control.messages <- msg:
+	case <-time.After(time.Millisecond * 100):
+		log.Printf("Failed to send msg to user %s\n", user.name)
 	}
 }
 
@@ -95,5 +107,5 @@ func (hub *UserHub) SendMessage(msg string, sender User) {
 	hub.broadcastMessage <- Message{msg, sender}
 }
 func (hub *UserHub) Quit() {
-	hub.quit <- 1
+	hub.quit <- struct{}{}
 }
