@@ -8,43 +8,57 @@ import (
 	"net"
 )
 
+type LoginAction int
+
 const (
-	WantsToLogIn = iota
-	WantsToRegister
-	Retry
-	Error
+	ActionLogin LoginAction = iota
+	ActionRegister
 )
 
-func PromptForUsernameAndPassword(c net.Conn) (e error, response int) {
-	_, err := c.Write([]byte("Type r to register, l to login\n"))
-	if err != nil {
-		return err, Error
-	}
-	reader := bufio.NewReader(c)
-
-	s, err := reader.ReadString('\n')
-
-	if err != nil {
-		return err, Error
-	}
+func strToLoginAction(s string) (LoginAction, error) {
 	switch s {
-	case "l\n":
-		return nil, WantsToLogIn
-	case "r\n":
-		return nil, WantsToRegister
+	case "r":
+		return ActionRegister, nil
+	case "l":
+		return ActionLogin, nil
+	case "": // happens when a user quits without choosing
+		return ActionRegister, io.EOF
 	default:
-		return nil, Retry
+		return ActionRegister, fmt.Errorf("Weird output from clientConn: %s", s)
 	}
 }
 
-func handleClient(c net.Conn, hub UserHub) {
-	_, err := c.Write([]byte("Connected successfully\n"))
+func acceptLogin(clientConn net.Conn, hub UserHub) (User, LoginAction, error) {
+	clientOutput := bufio.NewScanner(clientConn)
+	clientOutput.Scan()
+	err := clientOutput.Err()
 	if err != nil {
-		log.Printf("Error writing: %s", err)
-		return
+		return User{}, ActionRegister, err
+	}
+	action, err := strToLoginAction(clientOutput.Text())
+	if err != nil {
+		return User{}, ActionRegister, err
 	}
 
-	user, err := RegisterOrTryLoggingIn(c)
+	clientOutput.Scan()
+	err = clientOutput.Err()
+	if err != nil {
+		return User{}, ActionRegister, err
+	}
+	username := clientOutput.Text()
+	clientOutput.Scan()
+	err = clientOutput.Err()
+	if err != nil {
+		return User{}, ActionRegister, err
+	}
+	password := clientOutput.Text()
+	return User{username, password}, action, nil
+
+}
+
+func handleClient(clientConn net.Conn, hub UserHub) {
+retry:
+	user, action, err := acceptLogin(clientConn, hub)
 	if err == io.EOF {
 		return
 	} else if err != nil {
@@ -53,104 +67,92 @@ func handleClient(c net.Conn, hub UserHub) {
 	}
 
 	control := NewUserControl()
-	hub.Login(user, control)
+	code := hub.Login(user, action, control)
+	if code == ReturnOk {
+		confirmLoggedIn(clientConn)
+	} else {
+		sendLoginError(code, clientConn)
+		goto retry
+	}
 	defer hub.Logout(user)
-	c.Write([]byte("Logged in as "))
-	c.Write([]byte(user.name))
-	c.Write([]byte("\n\n"))
 
-	MainClientLoop(c, hub, user, control)
+	MainClientLoop(clientConn, hub, user, control)
 }
 
-func MainClientLoop(c net.Conn, hub UserHub, user User, control UserControl) {
-	userInput := make(chan string)
-	eof := make(chan int)
-	go readIntoChan(c, userInput, eof)
+func sendLoginError(code ReturnCode, clientConn net.Conn) {
+	switch code {
+	case ReturnUserAlreadyOnline:
+		clientConn.Write([]byte("online"))
+	case ReturnUsernameExists:
+		clientConn.Write([]byte("exists"))
+	}
+}
+
+func confirmLoggedIn(clientConn net.Conn) {
+	clientConn.Write([]byte("success"))
+}
+
+func MainClientLoop(clientConn net.Conn, hub UserHub, user User, control UserControl) {
+	userInput, err := readAsyncIntoChan(clientConn)
 loop:
 	for {
 		select {
+		case err_ := <-err:
+			if err_ == io.EOF {
+				// user disconnected
+				hub.Logout(user)
+				break loop
+			}
+			fmt.Println("handleClient main loop: quitting")
+			break loop
 		case line := <-userInput:
 			hub.SendMessage(line, user)
-		case <-eof:
-			// user disconnected
-			break loop
 		case <-control.quit:
 			break loop
 		case msg := <-control.messages:
-			printMsg(c, msg)
+			printMsg(clientConn, msg)
+			msg.Ack()
 		}
 	}
 }
 
-func printMsg(writer io.Writer, msg Message) {
-	writer.Write([]byte(msg.sender.name))
+func printMsg(writer io.Writer, msg ChatMessage) {
+	writer.Write([]byte(msg.user.name))
 	writer.Write([]byte(": "))
-	writer.Write([]byte(msg.msg))
-}
-
-func RegisterOrTryLoggingIn(c net.Conn) (User, error) {
-	user := User{}
-retry:
-	for {
-		err, response := PromptForUsernameAndPassword(c)
-		if err != nil {
-			return User{}, err
-		}
-		switch response {
-		case Retry:
-			continue retry
-		case WantsToLogIn:
-			fallthrough
-		case WantsToRegister:
-			user, err = promptUsernameAndPassword(c)
-			if err != nil {
-				return User{}, err
-			}
-			status, exists := userDB[user]
-			if response == WantsToLogIn && !exists {
-				c.Write([]byte("Can't login: invalid credentials\n"))
-				continue retry
-			} else if response == WantsToRegister && exists {
-				c.Write([]byte("Can't register: user exists\n"))
-				continue retry
-			} else if status == Online {
-				c.Write([]byte("Can't login: user already online\n"))
-				continue retry
-			}
-			break retry
-		}
-	}
-	// success
-	return user, nil
+	writer.Write([]byte(msg.content))
 }
 
 // Read lines from reader and send them to outputs.
-func readIntoChan(reader io.Reader, outputs chan string, eof chan int) {
-	r := bufio.NewReader(reader)
-	for {
-		line, err := r.ReadString('\n')
-		if err == io.EOF {
-			eof <- 1
-			return
-		} else if err != nil {
-			fmt.Printf("reading error: %v", err)
-			return
+func readAsyncIntoChan(reader io.Reader) (outputs chan string, err chan error) {
+	outputs = make(chan string)
+	err = make(chan error)
+	scanner := bufio.NewScanner(reader)
+	go func() {
+		for {
+			scanner.Scan()
+			err_ := scanner.Err()
+			if err_ != nil {
+				fmt.Printf("ReadAsync error %s", err)
+				err <- err_
+				return
+			}
+			fmt.Printf("ReadAsync read '%s'", scanner.Text())
+			outputs <- scanner.Text()
 		}
-		outputs <- line
-	}
-
+	}()
+	return outputs, err
 }
 
-func promptUsernameAndPassword(c net.Conn) (User, error) {
-	r := bufio.NewReader(c)
-	c.Write([]byte("Username: "))
+func promptUsernameAndPassword(clientConn net.Conn) (User, error) {
+	r := bufio.NewReader(clientConn)
+	clientConn.Write([]byte("Username: "))
 	name, err := r.ReadString('\n')
 
 	if err != nil {
 		return User{}, err
 	}
 	name = name[0 : len(name)-1]
-	c.Write([]byte("Password: "))
+	clientConn.Write([]byte("Password: "))
 	pass, err := r.ReadString('\n')
 	if err != nil {
 		return User{}, err
