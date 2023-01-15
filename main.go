@@ -31,7 +31,7 @@ func server(port string) {
 	}
 	defer l.Close()
 	hub := NewUserHub()
-	go manageUsers(hub)
+	go mainHubLoop(hub)
 	defer hub.Quit()
 	for {
 		c, err := l.Accept()

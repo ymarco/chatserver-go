@@ -28,35 +28,43 @@ func strToLoginAction(s string) (LoginAction, error) {
 	}
 }
 
+func scanLine(s *bufio.Scanner) (string, error) {
+	if !s.Scan() {
+		if s.Err() == nil {
+			return "", io.EOF
+		} else {
+			return "", s.Err()
+		}
+	}
+	return s.Text(), nil
+}
+
 func acceptLogin(clientConn net.Conn, hub UserHub) (User, LoginAction, error) {
 	clientOutput := bufio.NewScanner(clientConn)
-	clientOutput.Scan()
-	err := clientOutput.Err()
+	choise, err := scanLine(clientOutput)
 	if err != nil {
 		return User{}, ActionRegister, err
 	}
-	action, err := strToLoginAction(clientOutput.Text())
+	action, err := strToLoginAction(choise)
 	if err != nil {
 		return User{}, ActionRegister, err
 	}
 
-	clientOutput.Scan()
-	err = clientOutput.Err()
+	username, err := scanLine(clientOutput)
 	if err != nil {
 		return User{}, ActionRegister, err
 	}
-	username := clientOutput.Text()
-	clientOutput.Scan()
-	err = clientOutput.Err()
+
+	password, err := scanLine(clientOutput)
 	if err != nil {
 		return User{}, ActionRegister, err
 	}
-	password := clientOutput.Text()
 	return User{username, password}, action, nil
 
 }
 
 func handleClient(clientConn net.Conn, hub UserHub) {
+	defer clientConn.Close()
 retry:
 	client, action, err := acceptLogin(clientConn, hub)
 	if err == io.EOF {
@@ -76,50 +84,54 @@ retry:
 		goto retry
 	}
 	defer hub.Logout(client)
-	if err := confirmLoggedIn(clientConn); err != nil {
+	if err := confirmSuccess(clientConn); err != nil {
 		log.Printf("Error with %s: %s\n", client.name, err)
 	}
 
-	MainClientLoop(clientConn, hub, client, control)
+	mainHandleClientLoop(clientConn, hub, client, control)
 }
 
 func sendLoginError(code ReturnCode, clientConn net.Conn) error {
+	word := "\n"
+
 	switch code {
 	case ReturnUserAlreadyOnline:
-		if _, err := clientConn.Write([]byte("online")); err != nil {
-			return err
-		}
+		word = "online\n"
 	case ReturnUsernameExists:
-		if _, err := clientConn.Write([]byte("exists")); err != nil {
-			return err
-		}
+		word = "exists\n"
+	case ReturnInvalidCredentials:
+		word = "invalidCredentials\n"
+	default:
+		panic("unreachable")
+	}
+	if _, err := clientConn.Write([]byte(word)); err != nil {
+		return err
 	}
 	return nil
 }
 
-func confirmLoggedIn(clientConn net.Conn) error {
+func confirmSuccess(clientConn net.Conn) error {
 	_, err := clientConn.Write([]byte("success\n"))
 	return err
 }
 
-func MainClientLoop(clientConn net.Conn, hub UserHub, client User, control UserControl) {
-	userInput, errChan := readAsyncIntoChan(clientConn)
+func mainHandleClientLoop(clientConn net.Conn, hub UserHub, client User, control UserControl) {
+	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
 loop:
 	for {
 		select {
-		case err := <-errChan:
-			if err == io.EOF {
+		case input := <-clientInput:
+			if input.err == io.EOF {
 				// client disconnected
-				hub.Logout(client)
 				break loop
-			} else {
-				log.Println(err)
+			} else if input.err != nil {
+				log.Println(input.err)
+				break loop
 			}
-			log.Printf("handleClient main loop for %s: quitting\n", client.name)
-			break loop
-		case line := <-userInput:
-			hub.SendMessage(line, client)
+			hub.SendMessage(input.val, client)
+			confirmSuccess(clientConn)
 		case <-control.quit:
+			fmt.Println("quit")
 			break loop
 		case msg := <-control.messages:
 			printMsg(clientConn, msg)
@@ -144,24 +156,20 @@ func printMsg(writer io.Writer, msg ChatMessage) error {
 	return nil
 }
 
-func readAsyncIntoChan(reader io.Reader) (outputs chan string, errChan chan error) {
-	outputs = make(chan string)
-	errChan = make(chan error)
-	scanner := bufio.NewScanner(reader)
+type ReadOutput struct {
+	val string
+	err error
+}
+
+func readAsyncIntoChan(scanner *bufio.Scanner) (outputs chan ReadOutput) {
+	outputs = make(chan ReadOutput)
 	go func() {
 		for {
-			scanner.Scan()
-			err_ := scanner.Err()
-			if err_ != nil {
-				fmt.Printf("ReadAsync error %s\n", err_)
-				errChan <- err_
-				return
-			}
-			fmt.Printf("ReadAsync read '%s'\n", scanner.Text())
-			outputs <- scanner.Text()
+			s, err := scanLine(scanner)
+			outputs <- ReadOutput{s, err}
 		}
 	}()
-	return outputs, errChan
+	return outputs
 }
 
 func promptUsernameAndPassword(clientConn net.Conn) (User, error) {

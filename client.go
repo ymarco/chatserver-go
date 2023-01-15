@@ -23,6 +23,70 @@ func client(port string) {
 		log.Fatalln(err)
 	}
 	fmt.Printf("Connected as %s\n\n", me.name)
+	err = mainClientLoop(me, userInput, serverConn)
+	switch err {
+	case nil:
+		return
+	case io.EOF:
+		fallthrough
+	case net.ErrClosed:
+		fmt.Println("Server closed")
+	default:
+		fmt.Println(err)
+	}
+
+}
+
+var ErrSelfQuit = errors.New("Our client has quit")
+
+func mainClientLoop(me User, userInput_ *bufio.Scanner, serverConn net.Conn) error {
+	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
+	userInput := readAsyncIntoChan(userInput_)
+	for {
+		select {
+		case msg := <-serverOutput:
+			if msg.err != nil {
+				return msg.err
+			}
+			fmt.Println(msg.val)
+		case line := <-userInput:
+			if line.err == io.EOF {
+				return ErrSelfQuit
+			} else if line.err != nil {
+				return line.err
+			}
+			if err := sendMessage(line.val, serverConn); err != nil {
+				return err
+			}
+			if err := expectSuccess(serverOutput); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func sendMessage(msg string, serverConn net.Conn) error {
+	_, err := serverConn.Write([]byte(msg))
+	if err != nil {
+		return err
+	}
+	_, err = serverConn.Write([]byte("\n"))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func expectSuccess(serverOutput chan ReadOutput) error {
+	ack := <-serverOutput
+	if ack.err != nil {
+		return ack.err
+	}
+	if ack.val != "success" {
+		return ErrOddServerOutput
+	}
+	return nil
+
 }
 func loginLoopUntilSuccess(userInput *bufio.Scanner, serverConn io.ReadWriter) (User, error) {
 retry:
@@ -58,12 +122,10 @@ func ChooseLoginOrRegister(userInput *bufio.Scanner) (LoginAction, error) {
 	for {
 		fmt.Println("Type r to register, l to login")
 
-		userInput.Scan()
-		err := userInput.Err()
+		c, err := scanLine(userInput)
 		if err != nil {
 			return ActionRegister, err
 		}
-		c := userInput.Text()
 		switch c {
 		case "r":
 			return ActionRegister, nil
@@ -77,27 +139,24 @@ func ChooseLoginOrRegister(userInput *bufio.Scanner) (LoginAction, error) {
 
 func promptForUsernameAndPassword(userInput *bufio.Scanner) (User, error) {
 	fmt.Printf("Username: ")
-	userInput.Scan()
-	err := userInput.Err()
+	username, err := scanLine(userInput)
 	if err != nil {
 		return User{}, err
 	}
-	username := userInput.Text()
 
 	fmt.Printf("Password: ")
-	userInput.Scan()
-	err = userInput.Err()
+	password, err := scanLine(userInput)
 	if err != nil {
 		return User{}, err
 	}
-	password := userInput.Text()
 
 	return User{username, password}, nil
 }
 
-var ErrUsernameExists = errors.New("Username already exists")
-var ErrUserOnline = errors.New("Username asready online")
-var ErrInvalidCredentials = errors.New("Username asready online")
+var ErrUsernameExists = errors.New("username already exists")
+var ErrUserOnline = errors.New("username already online")
+var ErrInvalidCredentials = errors.New("username already online")
+var ErrOddServerOutput = errors.New("weird output from server")
 
 func login(action LoginAction, user User, serverConn io.ReadWriter) error {
 	switch action {
@@ -113,13 +172,11 @@ func login(action LoginAction, user User, serverConn io.ReadWriter) error {
 	serverConn.Write([]byte("\n"))
 
 	serverOutput := bufio.NewScanner(serverConn)
-	serverOutput.Scan()
-	err := serverOutput.Err()
-
+	status, err := scanLine(serverOutput)
 	if err != nil {
 		return err
 	}
-	switch serverOutput.Text() {
+	switch status {
 	case "success":
 		return nil
 	case "exists":
@@ -129,6 +186,6 @@ func login(action LoginAction, user User, serverConn io.ReadWriter) error {
 	case "invalidCredentials":
 		return ErrInvalidCredentials
 	default:
-		return fmt.Errorf("Weird output from server: %s", serverOutput.Text())
+		return ErrOddServerOutput
 	}
 }

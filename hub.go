@@ -11,6 +11,7 @@ const (
 )
 
 var userDB = make(map[User]OnlineStatus)
+var usernames = make(map[string]bool)
 
 type OnlineStatus int
 type UserControl struct {
@@ -108,14 +109,29 @@ func NewUserHub() UserHub {
 
 // Manage users. Return only when a message is received from quit. Clients send
 // messages to the channels logins, logouts, messageStream and quit, and
-// manageUsers handles the state and update all the clients.
-func manageUsers(hub UserHub) {
+// mainHubLoop handles the state and update all the clients.
+func mainHubLoop(hub UserHub) {
 	for {
 		select {
 		case newLogin := <-hub.logins:
 			// TODO check
-			hub.activeUsers[newLogin.user] = newLogin.control
+			switch newLogin.action {
+			case ActionLogin:
+				if _, exists := userDB[newLogin.user]; !exists {
+					newLogin.AckWithCode(ReturnInvalidCredentials)
+					continue
+				} else if userDB[newLogin.user] == Online {
+					newLogin.AckWithCode(ReturnUserAlreadyOnline)
+					continue
+				}
+			case ActionRegister:
+				if usernames[newLogin.user.name] {
+					newLogin.AckWithCode(ReturnUsernameExists)
+					continue
+				}
+			}
 			userDB[newLogin.user] = Online
+			hub.activeUsers[newLogin.user] = newLogin.control
 			newLogin.AckWithCode(ReturnOk)
 			log.Printf("Logged in: %s\n", newLogin.user.name)
 		case logout := <-hub.logouts:
@@ -171,11 +187,15 @@ func (hub *UserHub) Quit() {
 
 func broadcastMessage(msg ChatMessage, users map[User]UserControl) {
 	for user, control := range users {
+		if user == msg.user {
+			continue
+		}
+
 		msg := NewChatMessage(msg.user, msg.content)
 		select {
 		case control.messages <- msg:
 			msg.WaitForAck()
-		case <-time.After(time.Millisecond * 100):
+		case <-time.After(time.Millisecond * 200):
 			log.Printf("Failed to send msg to user %s\n", user.name)
 		}
 	}
