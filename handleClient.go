@@ -68,44 +68,54 @@ retry:
 
 	control := NewUserControl()
 	code := hub.Login(client, action, control)
-	if code == ReturnOk {
-		confirmLoggedIn(clientConn)
-	} else {
-		sendLoginError(code, clientConn)
+	if code != ReturnOk {
+		if err := sendLoginError(code, clientConn); err != nil {
+			log.Printf("Error with %s: %s\n", client.name, err)
+			return
+		}
 		goto retry
 	}
 	defer hub.Logout(client)
+	if err := confirmLoggedIn(clientConn); err != nil {
+		log.Printf("Error with %s: %s\n", client.name, err)
+	}
 
 	MainClientLoop(clientConn, hub, client, control)
 }
 
-func sendLoginError(code ReturnCode, clientConn net.Conn) {
+func sendLoginError(code ReturnCode, clientConn net.Conn) error {
 	switch code {
 	case ReturnUserAlreadyOnline:
-		clientConn.Write([]byte("online"))
+		if _, err := clientConn.Write([]byte("online")); err != nil {
+			return err
+		}
 	case ReturnUsernameExists:
-		clientConn.Write([]byte("exists"))
+		if _, err := clientConn.Write([]byte("exists")); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func confirmLoggedIn(clientConn net.Conn) {
-	clientConn.Write([]byte("success\n"))
+func confirmLoggedIn(clientConn net.Conn) error {
+	_, err := clientConn.Write([]byte("success\n"))
+	return err
 }
 
 func MainClientLoop(clientConn net.Conn, hub UserHub, client User, control UserControl) {
-	userInput, err := readAsyncIntoChan(clientConn)
+	userInput, errChan := readAsyncIntoChan(clientConn)
 loop:
 	for {
 		select {
-		case err_ := <-err:
-			if err_ == io.EOF {
+		case err := <-errChan:
+			if err == io.EOF {
 				// client disconnected
 				hub.Logout(client)
 				break loop
 			} else {
-				log.Println(err_)
+				log.Println(err)
 			}
-			log.Println("handleClient main loop: quitting")
+			log.Printf("handleClient main loop for %s: quitting\n", client.name)
 			break loop
 		case line := <-userInput:
 			hub.SendMessage(line, client)
@@ -118,16 +128,25 @@ loop:
 	}
 }
 
-func printMsg(writer io.Writer, msg ChatMessage) {
-	writer.Write([]byte(msg.user.name))
-	writer.Write([]byte(": "))
-	writer.Write([]byte(msg.content))
+func printMsg(writer io.Writer, msg ChatMessage) error {
+	if _, err := writer.Write([]byte(msg.user.name)); err != nil {
+		return err
+	}
+	if _, err := writer.Write([]byte(": ")); err != nil {
+		return err
+	}
+	if _, err := writer.Write([]byte(msg.content)); err != nil {
+		return err
+	}
+	if _, err := writer.Write([]byte("\n")); err != nil {
+		return err
+	}
+	return nil
 }
 
-// Read lines from reader and send them to outputs.
-func readAsyncIntoChan(reader io.Reader) (outputs chan string, err chan error) {
+func readAsyncIntoChan(reader io.Reader) (outputs chan string, errChan chan error) {
 	outputs = make(chan string)
-	err = make(chan error)
+	errChan = make(chan error)
 	scanner := bufio.NewScanner(reader)
 	go func() {
 		for {
@@ -135,14 +154,14 @@ func readAsyncIntoChan(reader io.Reader) (outputs chan string, err chan error) {
 			err_ := scanner.Err()
 			if err_ != nil {
 				fmt.Printf("ReadAsync error %s\n", err_)
-				err <- err_
+				errChan <- err_
 				return
 			}
 			fmt.Printf("ReadAsync read '%s'\n", scanner.Text())
 			outputs <- scanner.Text()
 		}
 	}()
-	return outputs, err
+	return outputs, errChan
 }
 
 func promptUsernameAndPassword(clientConn net.Conn) (User, error) {

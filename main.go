@@ -38,6 +38,7 @@ func server(port string) {
 		if err != nil {
 			log.Fatalln(err)
 		}
+		log.Printf("Got a connection from %s\n", c.LocalAddr().String())
 		go handleClient(c, hub)
 	}
 }

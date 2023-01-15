@@ -23,8 +23,6 @@ func client(port string) {
 		log.Fatalln(err)
 	}
 	fmt.Printf("Connected as %s\n\n", me.name)
-
-
 }
 func loginLoopUntilSuccess(userInput *bufio.Scanner, serverConn io.ReadWriter) (User, error) {
 retry:
