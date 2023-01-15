@@ -58,7 +58,7 @@ func acceptLogin(clientConn net.Conn, hub UserHub) (User, LoginAction, error) {
 
 func handleClient(clientConn net.Conn, hub UserHub) {
 retry:
-	user, action, err := acceptLogin(clientConn, hub)
+	client, action, err := acceptLogin(clientConn, hub)
 	if err == io.EOF {
 		return
 	} else if err != nil {
@@ -67,16 +67,16 @@ retry:
 	}
 
 	control := NewUserControl()
-	code := hub.Login(user, action, control)
+	code := hub.Login(client, action, control)
 	if code == ReturnOk {
 		confirmLoggedIn(clientConn)
 	} else {
 		sendLoginError(code, clientConn)
 		goto retry
 	}
-	defer hub.Logout(user)
+	defer hub.Logout(client)
 
-	MainClientLoop(clientConn, hub, user, control)
+	MainClientLoop(clientConn, hub, client, control)
 }
 
 func sendLoginError(code ReturnCode, clientConn net.Conn) {
@@ -92,21 +92,21 @@ func confirmLoggedIn(clientConn net.Conn) {
 	clientConn.Write([]byte("success"))
 }
 
-func MainClientLoop(clientConn net.Conn, hub UserHub, user User, control UserControl) {
+func MainClientLoop(clientConn net.Conn, hub UserHub, client User, control UserControl) {
 	userInput, err := readAsyncIntoChan(clientConn)
 loop:
 	for {
 		select {
 		case err_ := <-err:
 			if err_ == io.EOF {
-				// user disconnected
-				hub.Logout(user)
+				// client disconnected
+				hub.Logout(client)
 				break loop
 			}
 			fmt.Println("handleClient main loop: quitting")
 			break loop
 		case line := <-userInput:
-			hub.SendMessage(line, user)
+			hub.SendMessage(line, client)
 		case <-control.quit:
 			break loop
 		case msg := <-control.messages:
