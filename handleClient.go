@@ -134,11 +134,11 @@ func readAsyncIntoChan(reader io.Reader) (outputs chan string, err chan error) {
 			scanner.Scan()
 			err_ := scanner.Err()
 			if err_ != nil {
-				fmt.Printf("ReadAsync error %s", err)
+				fmt.Printf("ReadAsync error %s\n", err_)
 				err <- err_
 				return
 			}
-			fmt.Printf("ReadAsync read '%s'", scanner.Text())
+			fmt.Printf("ReadAsync read '%s'\n", scanner.Text())
 			outputs <- scanner.Text()
 		}
 	}()
