@@ -89,7 +89,7 @@ func sendLoginError(code ReturnCode, clientConn net.Conn) {
 }
 
 func confirmLoggedIn(clientConn net.Conn) {
-	clientConn.Write([]byte("success"))
+	clientConn.Write([]byte("success\n"))
 }
 
 func MainClientLoop(clientConn net.Conn, hub UserHub, client User, control UserControl) {
@@ -102,8 +102,10 @@ loop:
 				// client disconnected
 				hub.Logout(client)
 				break loop
+			} else {
+				log.Println(err_)
 			}
-			fmt.Println("handleClient main loop: quitting")
+			log.Println("handleClient main loop: quitting")
 			break loop
 		case line := <-userInput:
 			hub.SendMessage(line, client)
