@@ -16,7 +16,7 @@ func main() {
 	port := ":" + os.Args[1]
 	switch os.Args[2] {
 	case "client":
-		client(port, os.Stdin)
+		client(port, os.Stdin, os.Stdout)
 	case "server":
 		server(port)
 	default:

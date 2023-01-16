@@ -77,7 +77,7 @@ retry:
 	control := NewUserControl()
 	code := hub.Login(client, action, control)
 	if code != ReturnOk {
-		if err := sendLoginError(code, clientConn); err != nil {
+		if err := sendReturnCode(code, clientConn); err != nil {
 			log.Printf("Error with %s: %s\n", client.name, err)
 			return
 		}
@@ -91,16 +91,22 @@ retry:
 	mainHandleClientLoop(clientConn, hub, client, control)
 }
 
-func sendLoginError(code ReturnCode, clientConn net.Conn) error {
+func sendReturnCode(code ReturnCode, clientConn net.Conn) error {
 	word := "\n"
 
 	switch code {
+	case ReturnOk:
+		word = "success\n"
 	case ReturnUserAlreadyOnline:
 		word = "online\n"
 	case ReturnUsernameExists:
 		word = "exists\n"
 	case ReturnInvalidCredentials:
 		word = "invalidCredentials\n"
+	case ReturnMsgFalidToAll:
+		word = "msgFailedToSome\n"
+	case ReturnMsgFailedToSome:
+		word = "msgFailedToAll\n"
 	default:
 		panic("unreachable")
 	}
@@ -128,8 +134,11 @@ loop:
 				log.Println(input.err)
 				break loop
 			}
-			hub.SendMessage(input.val, client)
-			confirmSuccess(clientConn)
+			err := sendReturnCode(hub.BroadcastMessage(input.val, client), clientConn)
+			if err != nil {
+				log.Println(input.err)
+				break loop
+			}
 		case <-control.quit:
 			fmt.Println("quit")
 			break loop
@@ -170,6 +179,17 @@ func readAsyncIntoChan(scanner *bufio.Scanner) (outputs chan ReadOutput) {
 		}
 	}()
 	return outputs
+}
+
+func writeAsyncFromChan(writer io.Writer) (inputs chan string) {
+	inputs = make(chan string)
+	bufWriter := bufio.NewWriter(writer)
+	go func() {
+		for s := range inputs {
+			bufWriter.WriteString(s)
+		}
+	}()
+	return inputs
 }
 
 func promptUsernameAndPassword(clientConn net.Conn) (User, error) {

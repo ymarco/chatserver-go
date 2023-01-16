@@ -36,6 +36,8 @@ const (
 	ReturnUserAlreadyOnline
 	ReturnUsernameExists
 	ReturnInvalidCredentials
+	ReturnMsgFailedToSome
+	ReturnMsgFalidToAll
 )
 
 type Message struct {
@@ -140,7 +142,7 @@ func mainHubLoop(hub UserHub) {
 			logout.Ack()
 			log.Printf("Logged out: %s\n", logout.user.name)
 		case msg := <-hub.messageStream:
-			go broadcastMessage(msg, hub.activeUsers)
+			go sendMessageToAllUsers(msg, hub.activeUsers)
 			log.Printf("%s: %s\n", msg.user.name, msg.content)
 		case q := <-hub.quit:
 			for user, control := range hub.activeUsers {
@@ -174,7 +176,7 @@ func (hub *UserHub) Logout(user User) {
 	hub.logouts <- m
 	m.WaitForAck()
 }
-func (hub *UserHub) SendMessage(content string, sender User) ReturnCode {
+func (hub *UserHub) BroadcastMessage(content string, sender User) ReturnCode {
 	m := NewChatMessage(sender, content)
 	hub.messageStream <- m
 	return m.WaitForAck()
@@ -185,7 +187,9 @@ func (hub *UserHub) Quit() {
 	m.WaitForAck()
 }
 
-func broadcastMessage(msg ChatMessage, users map[User]UserControl) {
+func sendMessageToAllUsers(msg ChatMessage, users map[User]UserControl) {
+	totalToSendTo := len(users) - 1
+	succeded := 0
 	for user, control := range users {
 		if user == msg.user {
 			continue
@@ -195,9 +199,16 @@ func broadcastMessage(msg ChatMessage, users map[User]UserControl) {
 		select {
 		case control.messages <- msg:
 			msg.WaitForAck()
+			succeded++
 		case <-time.After(time.Millisecond * 200):
 			log.Printf("Failed to send msg to user %s\n", user.name)
 		}
 	}
-	msg.Ack() // TODO send how many users the message reached
+	code := ReturnOk
+	if succeded == 0 && totalToSendTo != 0 {
+		code = ReturnMsgFalidToAll
+	} else if succeded != totalToSendTo {
+		code = ReturnMsgFailedToSome
+	}
+	msg.AckWithCode(code)
 }
