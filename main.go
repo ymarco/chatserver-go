@@ -16,7 +16,7 @@ func main() {
 	port := ":" + os.Args[1]
 	switch os.Args[2] {
 	case "client":
-		client(port)
+		client(port, os.Stdin)
 	case "server":
 		server(port)
 	default:
@@ -38,7 +38,7 @@ func server(port string) {
 		if err != nil {
 			log.Fatalln(err)
 		}
-		log.Printf("Got a connection from %s\n", c.LocalAddr().String())
+		log.Printf("Connected: %s\n", c.LocalAddr().String())
 		go handleClient(c, hub)
 	}
 }

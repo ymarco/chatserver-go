@@ -7,17 +7,16 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 )
 
-func client(port string) {
+func client(port string, in io.Reader) {
 	serverConn, err := net.Dial("tcp4", port)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer serverConn.Close()
 	fmt.Println("Connected successfully")
-	userInput := bufio.NewScanner(os.Stdin)
+	userInput := bufio.NewScanner(in)
 	me, err := loginLoopUntilSuccess(userInput, serverConn)
 	if err != nil {
 		log.Fatalln(err)
