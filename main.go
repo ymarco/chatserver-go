@@ -30,15 +30,17 @@ func server(port string) {
 		log.Fatalln(err)
 	}
 	defer l.Close()
+
 	hub := NewUserHub()
 	go mainHubLoop(hub)
 	defer hub.Quit()
+
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			log.Fatalln(err)
 		}
-		log.Printf("Connected: %s\n", c.LocalAddr().String())
+		log.Printf("Connected: %s\n", c.RemoteAddr())
 		go handleClient(c, hub)
 	}
 }

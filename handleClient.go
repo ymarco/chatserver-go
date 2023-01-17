@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 )
 
 type LoginAction int
@@ -41,11 +42,11 @@ func scanLine(s *bufio.Scanner) (string, error) {
 
 func acceptLogin(clientConn net.Conn, hub UserHub) (User, LoginAction, error) {
 	clientOutput := bufio.NewScanner(clientConn)
-	choise, err := scanLine(clientOutput)
+	choice, err := scanLine(clientOutput)
 	if err != nil {
 		return User{}, ActionRegister, err
 	}
-	action, err := strToLoginAction(choise)
+	action, err := strToLoginAction(choice)
 	if err != nil {
 		return User{}, ActionRegister, err
 	}
@@ -59,12 +60,13 @@ func acceptLogin(clientConn net.Conn, hub UserHub) (User, LoginAction, error) {
 	if err != nil {
 		return User{}, ActionRegister, err
 	}
-	return User{username, password}, action, nil
 
+	return User{username, password}, action, nil
 }
 
 func handleClient(clientConn net.Conn, hub UserHub) {
 	defer clientConn.Close()
+	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
 retry:
 	client, action, err := acceptLogin(clientConn, hub)
 	if err == io.EOF {
@@ -84,7 +86,7 @@ retry:
 		goto retry
 	}
 	defer hub.Logout(client)
-	if err := confirmSuccess(clientConn); err != nil {
+	if err := sendReturnCode(ReturnOk, clientConn); err != nil {
 		log.Printf("Error with %s: %s\n", client.name, err)
 	}
 
@@ -92,37 +94,13 @@ retry:
 }
 
 func sendReturnCode(code ReturnCode, clientConn net.Conn) error {
-	word := "\n"
-
-	switch code {
-	case ReturnOk:
-		word = "success\n"
-	case ReturnUserAlreadyOnline:
-		word = "online\n"
-	case ReturnUsernameExists:
-		word = "exists\n"
-	case ReturnInvalidCredentials:
-		word = "invalidCredentials\n"
-	case ReturnMsgFalidToAll:
-		word = "msgFailedToSome\n"
-	case ReturnMsgFailedToSome:
-		word = "msgFailedToAll\n"
-	default:
-		panic("unreachable")
-	}
-	if _, err := clientConn.Write([]byte(word)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func confirmSuccess(clientConn net.Conn) error {
-	_, err := clientConn.Write([]byte("success\n"))
+	_, err := clientConn.Write([]byte(string(code) + "\n"))
 	return err
 }
 
 func mainHandleClientLoop(clientConn net.Conn, hub UserHub, client User, control UserControl) {
 	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
+
 loop:
 	for {
 		select {
@@ -133,6 +111,10 @@ loop:
 			} else if input.err != nil {
 				log.Println(input.err)
 				break loop
+			}
+			if strings.HasPrefix(input.val, "/") {
+				runUserCommand(input.val[1:], hub, client, clientConn)
+				continue
 			}
 			err := sendReturnCode(hub.BroadcastMessage(input.val, client), clientConn)
 			if err != nil {
@@ -149,20 +131,25 @@ loop:
 	}
 }
 
+func runUserCommand(s string, hub UserHub, client User, clientConn net.Conn) {
+	sendReturnCode(ReturnOk, clientConn)
+	switch s {
+	case "quit":
+		hub.Logout(client)
+		printCmd(clientConn, "logout")
+	default:
+		m := NewChatMessage(User{name: "server"}, "Invalid command")
+		printMsg(clientConn, m)
+	}
+}
+
 func printMsg(writer io.Writer, msg ChatMessage) error {
-	if _, err := writer.Write([]byte(msg.user.name)); err != nil {
-		return err
-	}
-	if _, err := writer.Write([]byte(": ")); err != nil {
-		return err
-	}
-	if _, err := writer.Write([]byte(msg.content)); err != nil {
-		return err
-	}
-	if _, err := writer.Write([]byte("\n")); err != nil {
-		return err
-	}
-	return nil
+	_, err := writer.Write([]byte(msg.user.name + ": " + msg.content + "\n"))
+	return err
+}
+func printCmd(writer io.Writer, cmd string) error {
+	_, err := writer.Write([]byte(cmd + "\n"))
+	return err
 }
 
 type ReadOutput struct {

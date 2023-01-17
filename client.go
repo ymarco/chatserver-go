@@ -7,37 +7,82 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
+	"syscall"
 	"time"
 )
 
 func client(port string, in io.Reader, out io.Writer) {
-	serverConn, err := net.Dial("tcp4", port)
-	if err != nil {
-		log.Fatalln(err)
-	}
+	log.SetOutput(out)
+	me := User{"", ""}
+	action := ActionRegister
+	haveUser := false
+reconnect:
+	serverConn, err := connectToPortWithRetry(port, out)
 	defer serverConn.Close()
-	fmt.Fprintln(out, "Connected successfully")
+	log.Printf("Connected to %s\n", serverConn.RemoteAddr())
 	userInput := bufio.NewScanner(in)
-	me, err := loginLoopUntilSuccess(userInput, out, serverConn)
-	if err != nil {
+retryLogin:
+	if !haveUser {
+		me, action, err = promptForLoginTypeAndUser(userInput, out)
+		if err == io.EOF {
+			log.Println(out, "Server closed, retrying in 5 seconds")
+			goto reconnect
+		} else if err == ErrEmptyUsernameOrPassword {
+			goto retryLogin
+		} else if err != nil {
+			log.Fatalln(err)
+		}
+	}
+	err = LoginToServer(out, me, action, serverConn)
+	if err == ErrLogin {
+		goto retryLogin
+	}
+	if err == io.EOF {
+		fmt.Fprintln(out, "Server closed, retrying in 5 seconds")
+		goto reconnect
+	} else if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Fprintf(out, "Connected as %s\n\n", me.name)
+	fmt.Fprintf(out, "Logged in as %s\n\n", me.name)
 	err = mainClientLoop(me, userInput, out, serverConn)
 	switch err {
 	case nil:
-		return
+		panic("unreachable, mainClientLoop should return only on error")
 	case io.EOF:
 		fallthrough
+	case ErrServerTimedOut:
+		fallthrough
 	case net.ErrClosed:
-		fmt.Fprintln(out, "Server closed")
+		log.Println(out, "Server closed, retrying in 5 seconds")
+		time.Sleep(5 * time.Second)
+		goto reconnect
+	case ErrServerQuit:
+		haveUser = false
+		goto reconnect
 	default:
 		fmt.Fprintln(out, err)
 	}
-
 }
 
-var ErrSelfQuit = errors.New("Our client has quit")
+func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
+reconnect2:
+	serverConn, err := net.Dial("tcp4", port)
+	if oerr, ok := err.(*net.OpError); ok {
+		if serr, ok := oerr.Err.(*os.SyscallError); ok && serr.Err == syscall.ECONNREFUSED {
+			log.Println("Connection refused, retrying in 5 seconds")
+			time.Sleep(5 * time.Second)
+			goto reconnect2
+		}
+	}
+	if err != nil {
+		log.Fatalln(err)
+	}
+	return serverConn, err
+}
+
+var ErrSelfQuit = errors.New("our client has quit")
+var ErrServerQuit = errors.New("server logged us out")
 
 func mainClientLoop(me User, userInput_ *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
 	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
@@ -48,7 +93,11 @@ func mainClientLoop(me User, userInput_ *bufio.Scanner, out io.Writer, serverCon
 			if msg.err != nil {
 				return msg.err
 			}
-			fmt.Fprintln(out, msg.val)
+			if msg.val == "logout" {
+				return ErrServerQuit
+			} else {
+				fmt.Fprintln(out, msg.val)
+			}
 		case line := <-userInput:
 			if line.err == io.EOF {
 				return ErrSelfQuit
@@ -58,7 +107,7 @@ func mainClientLoop(me User, userInput_ *bufio.Scanner, out io.Writer, serverCon
 			if err := sendMessage(line.val, serverConn); err != nil {
 				return err
 			}
-			if err := expectSuccess(serverOutput); err != nil {
+			if err := expectOk(serverOutput); err != nil {
 				return err
 			}
 		}
@@ -66,61 +115,62 @@ func mainClientLoop(me User, userInput_ *bufio.Scanner, out io.Writer, serverCon
 }
 
 func sendMessage(msg string, serverConn net.Conn) error {
-	_, err := serverConn.Write([]byte(msg))
-	if err != nil {
-		return err
-	}
-	_, err = serverConn.Write([]byte("\n"))
+	_, err := serverConn.Write([]byte(msg + "\n"))
 	if err != nil {
 		return err
 	}
 	return nil
 }
+
 var ErrServerTimedOut = errors.New("server timed out")
 
-func expectSuccess(serverOutput chan ReadOutput) error {
+func expectOk(serverOutput chan ReadOutput) error {
 	select {
 	case ack := <-serverOutput:
 		if ack.err != nil {
 			return ack.err
 		}
-		if ack.val != "success" {
+		if ack.val != "Ok" {
 			return fmt.Errorf("Message sending error: %s\n", ack.val)
 		}
 		return nil
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		return ErrServerTimedOut
 	}
 
 }
-func loginLoopUntilSuccess(userInput *bufio.Scanner, out io.Writer, serverConn io.ReadWriter) (User, error) {
-retry:
+
+func promptForLoginTypeAndUser(userInput *bufio.Scanner, out io.Writer) (User, LoginAction, error) {
 	action, err := ChooseLoginOrRegister(userInput, out)
 	if err != nil {
-		return User{}, err
+		return User{}, action, err
 	}
 
 	me, err := promptForUsernameAndPassword(userInput, out)
-	if err != nil {
-		return User{}, err
-	}
-	err = login(action, me, serverConn)
+	return me, action, nil
+}
+
+var ErrLogin = errors.New("Username exists and such")
+
+func LoginToServer(out io.Writer, user User, action LoginAction,
+	serverConn io.ReadWriter) error {
+	err := login(action, user, serverConn)
 	switch err {
 	case nil:
 		// all good
 	case ErrUserOnline:
 		fmt.Fprintln(out, "User already online")
-		goto retry
+		return ErrLogin
 	case ErrUsernameExists:
-		fmt.Fprintln(out, "User already online")
-		goto retry
+		fmt.Fprintln(out, "Username exists")
+		return ErrLogin
 	case ErrInvalidCredentials:
 		fmt.Fprintln(out, "Wrong username or password, try again")
-		goto retry
+		return ErrLogin
 	default:
-		return User{}, err
+		return err
 	}
-	return me, nil
+	return nil
 }
 
 func ChooseLoginOrRegister(userInput *bufio.Scanner, out io.Writer) (LoginAction, error) {
@@ -142,19 +192,26 @@ func ChooseLoginOrRegister(userInput *bufio.Scanner, out io.Writer) (LoginAction
 	}
 }
 
+var ErrEmptyUsernameOrPassword = errors.New("empty username or password")
+
 func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (User, error) {
-	fmt.Fprintf(out, "Username: ")
+	fmt.Fprintf(out, "Username:\n")
 	username, err := scanLine(userInput)
 	if err != nil {
 		return User{}, err
 	}
+	if username == "" {
+		return User{}, ErrEmptyUsernameOrPassword
+	}
 
-	fmt.Fprintf(out, "Password: ")
+	fmt.Fprintf(out, "Password:\n")
 	password, err := scanLine(userInput)
 	if err != nil {
 		return User{}, err
 	}
-
+	if password == "" {
+		return User{}, ErrEmptyUsernameOrPassword
+	}
 	return User{username, password}, nil
 }
 
@@ -171,10 +228,8 @@ func login(action LoginAction, user User, serverConn io.ReadWriter) error {
 		serverConn.Write([]byte("r\n"))
 	}
 
-	serverConn.Write([]byte(user.name))
-	serverConn.Write([]byte("\n"))
-	serverConn.Write([]byte(user.password))
-	serverConn.Write([]byte("\n"))
+	serverConn.Write([]byte(user.name + "\n"))
+	serverConn.Write([]byte(user.password + "\n"))
 
 	serverOutput := bufio.NewScanner(serverConn)
 	status, err := scanLine(serverOutput)
@@ -182,7 +237,7 @@ func login(action LoginAction, user User, serverConn io.ReadWriter) error {
 		return err
 	}
 	switch status {
-	case "success":
+	case "Ok":
 		return nil
 	case "exists":
 		return ErrUsernameExists

@@ -10,9 +10,6 @@ const (
 	Online
 )
 
-var userDB = make(map[User]OnlineStatus)
-var usernames = make(map[string]bool)
-
 type OnlineStatus int
 type UserControl struct {
 	onlineStatus OnlineStatus
@@ -29,15 +26,16 @@ type User struct {
 	name     string
 	password string
 }
-type ReturnCode int
+type ReturnCode string
 
 const (
-	ReturnOk ReturnCode = iota
-	ReturnUserAlreadyOnline
-	ReturnUsernameExists
-	ReturnInvalidCredentials
-	ReturnMsgFailedToSome
-	ReturnMsgFalidToAll
+	ReturnOk                 ReturnCode = "Ok"
+	ReturnUserAlreadyOnline             = "User already online"
+	ReturnUsernameExists                = "Username already exists"
+	ReturnInvalidCredentials            = "Wrong username or password"
+	ReturnMsgFailedToSome               = "Message failed to send to some users"
+	ReturnMsgFailedToAll                = "Message failed to send to any users"
+	ReturnInvalidCommand                = "Invalid command"
 )
 
 type Message struct {
@@ -73,6 +71,27 @@ func NewLoginMessage(user User, control UserControl, action LoginAction) LoginMe
 		action,
 	}
 }
+func tryToLogin(newLogin LoginMessage, hub UserHub) {
+	switch newLogin.action {
+	case ActionLogin:
+		if _, exists := hub.userDB[newLogin.user]; !exists {
+			newLogin.AckWithCode(ReturnInvalidCredentials)
+			return
+		} else if hub.userDB[newLogin.user] == Online {
+			newLogin.AckWithCode(ReturnUserAlreadyOnline)
+			return
+		}
+	case ActionRegister:
+		if hub.usernameDB[newLogin.user.name] {
+			newLogin.AckWithCode(ReturnUsernameExists)
+			return
+
+		}
+	}
+	hub.userDB[newLogin.user] = Online
+	hub.activeUsers[newLogin.user] = newLogin.control
+	newLogin.AckWithCode(ReturnOk)
+}
 
 type LogoutMessage struct {
 	Message
@@ -93,6 +112,8 @@ func NewChatMessage(user User, content string) ChatMessage {
 
 type UserHub struct {
 	activeUsers   map[User]UserControl
+	userDB        map[User]OnlineStatus
+	usernameDB    map[string]bool
 	logins        chan LoginMessage
 	logouts       chan LogoutMessage
 	messageStream chan ChatMessage
@@ -106,6 +127,8 @@ func NewUserHub() UserHub {
 		messageStream: make(chan ChatMessage, 256),
 		quit:          make(chan Message, 256),
 		activeUsers:   make(map[User]UserControl),
+		userDB:        make(map[User]OnlineStatus),
+		usernameDB:    make(map[string]bool),
 	}
 }
 
@@ -116,34 +139,16 @@ func mainHubLoop(hub UserHub) {
 	for {
 		select {
 		case newLogin := <-hub.logins:
-			// TODO check
-			switch newLogin.action {
-			case ActionLogin:
-				if _, exists := userDB[newLogin.user]; !exists {
-					newLogin.AckWithCode(ReturnInvalidCredentials)
-					continue
-				} else if userDB[newLogin.user] == Online {
-					newLogin.AckWithCode(ReturnUserAlreadyOnline)
-					continue
-				}
-			case ActionRegister:
-				if usernames[newLogin.user.name] {
-					newLogin.AckWithCode(ReturnUsernameExists)
-					continue
-				}
-			}
-			userDB[newLogin.user] = Online
-			hub.activeUsers[newLogin.user] = newLogin.control
-			newLogin.AckWithCode(ReturnOk)
+			tryToLogin(newLogin, hub)
 			log.Printf("Logged in: %s\n", newLogin.user.name)
 		case logout := <-hub.logouts:
 			delete(hub.activeUsers, logout.user)
-			userDB[logout.user] = Offline
+			hub.userDB[logout.user] = Offline
 			logout.Ack()
 			log.Printf("Logged out: %s\n", logout.user.name)
 		case msg := <-hub.messageStream:
-			go sendMessageToAllUsers(msg, hub.activeUsers)
-			log.Printf("%s: %s\n", msg.user.name, msg.content)
+			go sendMessageToAllUsers(msg, copy(hub.activeUsers))
+			//log.Printf("%s: %s\n", msg.user.name, msg.content)
 		case q := <-hub.quit:
 			for user, control := range hub.activeUsers {
 				go tryQuitting(control, user)
@@ -154,16 +159,19 @@ func mainHubLoop(hub UserHub) {
 		}
 	}
 }
-
+func copy(m map[User]UserControl) map[User]UserControl {
+	new := make(map[User]UserControl)
+	for a, b := range m {
+		new[a] = b
+	}
+	return new
+}
 func tryQuitting(control UserControl, user User) {
 	select {
 	case control.quit <- struct{}{}:
 	case <-time.After(time.Millisecond * 100):
 		log.Printf("Failed to send quit user %s\n", user.name)
 	}
-}
-
-func trySendingMessage(recipient User, recipientControl UserControl, msg ChatMessage) {
 }
 
 func (hub *UserHub) Login(user User, action LoginAction, control UserControl) ReturnCode {
@@ -189,7 +197,7 @@ func (hub *UserHub) Quit() {
 
 func sendMessageToAllUsers(msg ChatMessage, users map[User]UserControl) {
 	totalToSendTo := len(users) - 1
-	succeded := 0
+	succeeded := 0
 	for user, control := range users {
 		if user == msg.user {
 			continue
@@ -199,15 +207,15 @@ func sendMessageToAllUsers(msg ChatMessage, users map[User]UserControl) {
 		select {
 		case control.messages <- msg:
 			msg.WaitForAck()
-			succeded++
+			succeeded++
 		case <-time.After(time.Millisecond * 200):
 			log.Printf("Failed to send msg to user %s\n", user.name)
 		}
 	}
 	code := ReturnOk
-	if succeded == 0 && totalToSendTo != 0 {
-		code = ReturnMsgFalidToAll
-	} else if succeded != totalToSendTo {
+	if succeeded == 0 && totalToSendTo != 0 {
+		code = ReturnMsgFailedToAll
+	} else if succeeded != totalToSendTo {
 		code = ReturnMsgFailedToSome
 	}
 	msg.AckWithCode(code)
