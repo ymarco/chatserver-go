@@ -74,21 +74,22 @@ func NewLoginMessage(user User, control UserControl, action LoginAction) LoginMe
 func tryToLogin(newLogin LoginMessage, hub UserHub) {
 	switch newLogin.action {
 	case ActionLogin:
-		if _, exists := hub.userDB[newLogin.user]; !exists {
+		pass, exists := hub.userDB[newLogin.user.name]
+		if (!exists) || pass != newLogin.user.password {
 			newLogin.AckWithCode(ReturnInvalidCredentials)
 			return
-		} else if hub.userDB[newLogin.user] == Online {
+		} else if _, isActive := hub.activeUsers[newLogin.user]; isActive {
 			newLogin.AckWithCode(ReturnUserAlreadyOnline)
 			return
 		}
 	case ActionRegister:
-		if hub.usernameDB[newLogin.user.name] {
+		if _, exists := hub.userDB[newLogin.user.name]; exists {
 			newLogin.AckWithCode(ReturnUsernameExists)
 			return
 
 		}
 	}
-	hub.userDB[newLogin.user] = Online
+	hub.userDB[newLogin.user.name] = newLogin.user.password
 	hub.activeUsers[newLogin.user] = newLogin.control
 	newLogin.AckWithCode(ReturnOk)
 }
@@ -111,9 +112,8 @@ func NewChatMessage(user User, content string) ChatMessage {
 }
 
 type UserHub struct {
-	activeUsers   map[User]UserControl
-	userDB        map[User]OnlineStatus
-	usernameDB    map[string]bool
+	activeUsers   map[User]UserController
+	userDB        map[string]string
 	logins        chan LoginMessage
 	logouts       chan LogoutMessage
 	messageStream chan ChatMessage
@@ -126,9 +126,8 @@ func NewUserHub() UserHub {
 		logouts:       make(chan LogoutMessage, 256),
 		messageStream: make(chan ChatMessage, 256),
 		quit:          make(chan Message, 256),
-		activeUsers:   make(map[User]UserControl),
-		userDB:        make(map[User]OnlineStatus),
-		usernameDB:    make(map[string]bool),
+		activeUsers:   make(map[User]UserController),
+		userDB:        make(map[string]string),
 	}
 }
 
@@ -143,7 +142,6 @@ func mainHubLoop(hub UserHub) {
 			log.Printf("Logged in: %s\n", newLogin.user.name)
 		case logout := <-hub.logouts:
 			delete(hub.activeUsers, logout.user)
-			hub.userDB[logout.user] = Offline
 			logout.Ack()
 			log.Printf("Logged out: %s\n", logout.user.name)
 		case msg := <-hub.messageStream:
