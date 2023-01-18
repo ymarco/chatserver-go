@@ -12,13 +12,13 @@ const (
 )
 
 type OnlineStatus int
-type UserController struct {
+type ClientController struct {
 	writeMessageToClient chan ChatMessage
 	quit                 chan struct{}
 }
 
-func NewUserController() UserController {
-	return UserController{quit: make(chan struct{}),
+func NewClientController() ClientController {
+	return ClientController{quit: make(chan struct{}),
 		writeMessageToClient: make(chan ChatMessage)}
 }
 
@@ -39,7 +39,7 @@ const (
 	ResponseIoErrorOccured Response = "IO error, couldn't get a response"
 )
 
-var activeUsers = make(map[User]UserController)
+var activeUsers = make(map[User]ClientController)
 var activeUsersLock = sync.Mutex{}
 var userDB = make(map[string]string)
 var userDBLock = sync.Mutex{}
@@ -53,7 +53,7 @@ func (m *ChatMessage) WaitForAck() Response {
 	return <-m.ack
 }
 
-func tryToAuthenticate(action AuthAction, user *User, controller UserController) Response {
+func tryToAuthenticate(action AuthAction, user *User, controller ClientController) Response {
 	activeUsersLock.Lock()
 	defer activeUsersLock.Unlock()
 
@@ -96,14 +96,14 @@ func NewChatMessage(user *User, content string) ChatMessage {
 	return ChatMessage{make(chan Response, 1), user, content}
 }
 
-func copy(m map[User]UserController) map[User]UserController {
-	new := make(map[User]UserController)
+func copy(m map[User]ClientController) map[User]ClientController {
+	new := make(map[User]ClientController)
 	for a, b := range m {
 		new[a] = b
 	}
 	return new
 }
-func tryQuitting(controller UserController, user User) {
+func tryQuitting(controller ClientController, user User) {
 	select {
 	case controller.quit <- struct{}{}:
 	case <-time.After(time.Millisecond * 100):
@@ -119,7 +119,7 @@ func broadcastMessageWait(contents string, sender *User) Response {
 	return sendMessageToAllUsersWait(contents, sender, cp)
 }
 
-func sendMessageToAllUsersWait(contents string, sender *User, users map[User]UserController) Response {
+func sendMessageToAllUsersWait(contents string, sender *User, users map[User]ClientController) Response {
 	totalToSendTo := len(users) - 1
 	succeeded := 0
 	for user, controller := range users {

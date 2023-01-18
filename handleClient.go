@@ -78,7 +78,7 @@ retry:
 		return
 	}
 
-	controller := NewUserController()
+	controller := NewClientController()
 	response := tryToAuthenticate(action, client, controller)
 	if response != ResponseOk {
 		if err := sendResponse(response, clientConn); err != nil {
@@ -100,7 +100,7 @@ func sendResponse(r Response, clientConn net.Conn) error {
 	return err
 }
 
-func mainHandleClientLoop(clientConn net.Conn, client *User, controller UserController) {
+func mainHandleClientLoop(clientConn net.Conn, client *User, controller ClientController) {
 	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
 
 	for {
@@ -112,12 +112,7 @@ func mainHandleClientLoop(clientConn net.Conn, client *User, controller UserCont
 				log.Println(input.err)
 				return
 			}
-			var err error = nil
-			if strings.HasPrefix(input.val, "/") {
-				err = runUserCommand(input.val[1:], client, clientConn)
-			} else {
-				err = sendResponse(broadcastMessageWait(input.val, client), clientConn)
-			}
+			err := dispatchClientInput(input.val, client, clientConn)
 			if err != nil {
 				log.Println(input.err)
 				return
@@ -126,13 +121,26 @@ func mainHandleClientLoop(clientConn net.Conn, client *User, controller UserCont
 			fmt.Println("quit")
 			return
 		case msg := <-controller.writeMessageToClient:
-			passMessageToClient(clientConn, msg)
+			err := passMessageToClient(clientConn, msg)
 			msg.Ack()
+			if err != nil {
+				log.Println(err)
+				return
+			}
 		}
 	}
 }
 
+func dispatchClientInput(input string, client *User, clientConn net.Conn) error {
+	if strings.HasPrefix(input, "/") {
+		return runUserCommand(input[1:], client, clientConn)
+	} else {
+		return sendResponse(broadcastMessageWait(input, client), clientConn)
+	}
+}
+
 const LogoutCmd = "$logout$"
+
 func runUserCommand(s string, client *User, clientConn net.Conn) error {
 	err := sendResponse(ResponseOk, clientConn)
 	if err != nil {
@@ -162,7 +170,7 @@ type ReadOutput struct {
 	err error
 }
 
-func readAsyncIntoChan(scanner *bufio.Scanner) (<-chan ReadOutput) {
+func readAsyncIntoChan(scanner *bufio.Scanner) <-chan ReadOutput {
 	outputs := make(chan ReadOutput)
 	go func() {
 		for {

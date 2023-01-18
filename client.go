@@ -27,7 +27,7 @@ reconnect:
 		log.Fatalln(err)
 	}
 	fmt.Fprintf(out, "Logged in as %s\n\n", me.name)
-	err = handleClientMessages(me, userInput, out, serverConn)
+	err = handleClientMessagesLoop(me, userInput, out, serverConn)
 	switch err {
 	case nil:
 		panic("unreachable, mainClientLoop should return only on error")
@@ -61,6 +61,7 @@ reconnect2:
 	serverConn, err := net.Dial("tcp4", port)
 	if oerr, ok := err.(*net.OpError); ok {
 		if serr, ok := oerr.Err.(*os.SyscallError); ok && serr.Err == syscall.ECONNREFUSED {
+			log.SetOutput(out)
 			log.Println("Connection refused, retrying in 5 seconds")
 			time.Sleep(5 * time.Second)
 			goto reconnect2
@@ -74,7 +75,7 @@ reconnect2:
 
 var ErrServerQuit = errors.New("server logged us out")
 
-func handleClientMessages(me *User, userInput_ *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
+func handleClientMessagesLoop(me *User, userInput_ *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
 	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
 	userInput := readAsyncIntoChan(userInput_)
 	for {
