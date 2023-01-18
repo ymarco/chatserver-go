@@ -76,41 +76,40 @@ retry:
 		return
 	}
 
-	control := NewUserControl()
-	code := hub.Login(client, action, control)
-	if code != ReturnOk {
-		if err := sendReturnCode(code, clientConn); err != nil {
+	controller := NewUserController()
+	response := tryToLogin(action, client, controller)
+	if response != ResponseOk {
+		if err := sendReturnCode(response, clientConn); err != nil {
 			log.Printf("Error with %s: %s\n", client.name, err)
 			return
 		}
 		goto retry
 	}
 	defer hub.Logout(client)
-	if err := sendReturnCode(ReturnOk, clientConn); err != nil {
+	if err := sendReturnCode(ResponseOk, clientConn); err != nil {
 		log.Printf("Error with %s: %s\n", client.name, err)
 	}
 
-	mainHandleClientLoop(clientConn, hub, client, control)
+	mainHandleClientLoop(clientConn, hub, client, controller)
 }
 
-func sendReturnCode(code ReturnCode, clientConn net.Conn) error {
+func sendReturnCode(code Response, clientConn net.Conn) error {
 	_, err := clientConn.Write([]byte(string(code) + "\n"))
 	return err
 }
 
-func mainHandleClientLoop(clientConn net.Conn, hub UserHub, client User, control UserControl) {
+func mainHandleClientLoop(clientConn net.Conn, hub UserHub, client User, controller UserController) {
 	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
 
-loop:
 	for {
 		select {
 		case input := <-clientInput:
 			if input.err == io.EOF {
 				// client disconnected
-				break loop
+				return
 			} else if input.err != nil {
 				log.Println(input.err)
-				break loop
+				return
 			}
 			if strings.HasPrefix(input.val, "/") {
 				runUserCommand(input.val[1:], hub, client, clientConn)
@@ -119,12 +118,12 @@ loop:
 			err := sendReturnCode(hub.BroadcastMessage(input.val, client), clientConn)
 			if err != nil {
 				log.Println(input.err)
-				break loop
+				return
 			}
-		case <-control.quit:
+		case <-controller.quit:
 			fmt.Println("quit")
-			break loop
-		case msg := <-control.messages:
+			return
+		case msg := <-controller.messages:
 			printMsg(clientConn, msg)
 			msg.Ack()
 		}
@@ -132,7 +131,7 @@ loop:
 }
 
 func runUserCommand(s string, hub UserHub, client User, clientConn net.Conn) {
-	sendReturnCode(ReturnOk, clientConn)
+	sendReturnCode(ResponseOk, clientConn)
 	switch s {
 	case "quit":
 		hub.Logout(client)
