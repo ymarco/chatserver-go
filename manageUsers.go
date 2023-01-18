@@ -42,23 +42,12 @@ var activeUsersLock = sync.Mutex{}
 var userDB = make(map[string]string)
 var userDBLock = sync.Mutex{}
 
-type Message struct {
-	ack  chan Response
-	user User
-}
-
-func NewMessage(user User) Message {
-	return Message{make(chan Response, 1), user}
-}
-
-func (m *Message) Ack() {
+func (m *ChatMessage) Ack() {
 	// shouldn't block, since the channel has size 1
 	m.ack <- ResponseOk
 }
-func (m *Message) AckWithCode(code Response) {
-	m.ack <- code
-}
-func (m *Message) WaitForAck() Response {
+
+func (m *ChatMessage) WaitForAck() Response {
 	return <-m.ack
 }
 
@@ -95,22 +84,13 @@ func logout(user User) {
 }
 
 type ChatMessage struct {
-	Message
+	ack     chan Response
+	user    User
 	content string
 }
 
 func NewChatMessage(user User, content string) ChatMessage {
-	return ChatMessage{NewMessage(user), content}
-}
-
-type UserHub struct {
-	quit chan Message
-}
-
-func NewUserHub() UserHub {
-	return UserHub{
-		quit: make(chan Message, 256),
-	}
+	return ChatMessage{make(chan Response, 1), user, content}
 }
 
 func copy(m map[User]UserController) map[User]UserController {
