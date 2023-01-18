@@ -9,14 +9,14 @@ import (
 	"strings"
 )
 
-type LoginAction int
+type AuthAction int
 
 const (
-	ActionLogin LoginAction = iota
+	ActionLogin AuthAction = iota
 	ActionRegister
 )
 
-func strToLoginAction(s string) (LoginAction, error) {
+func strToLoginAction(s string) (AuthAction, error) {
 	switch s {
 	case "r":
 		return ActionRegister, nil
@@ -25,7 +25,7 @@ func strToLoginAction(s string) (LoginAction, error) {
 	case "": // happens when a user quits without choosing
 		return ActionRegister, io.EOF
 	default:
-		return ActionRegister, fmt.Errorf("Weird output from clientConn: %s", s)
+		return ActionRegister, fmt.Errorf("weird output from clientConn: %s", s)
 	}
 }
 
@@ -40,7 +40,7 @@ func scanLine(s *bufio.Scanner) (string, error) {
 	return s.Text(), nil
 }
 
-func acceptLogin(clientConn net.Conn, hub UserHub) (User, LoginAction, error) {
+func acceptLogin(clientConn net.Conn) (User, AuthAction, error) {
 	clientOutput := bufio.NewScanner(clientConn)
 	choice, err := scanLine(clientOutput)
 	if err != nil {
@@ -64,11 +64,11 @@ func acceptLogin(clientConn net.Conn, hub UserHub) (User, LoginAction, error) {
 	return User{username, password}, action, nil
 }
 
-func handleClient(clientConn net.Conn, hub UserHub) {
+func handleClient(clientConn net.Conn) {
 	defer closePrintErr(clientConn)
 	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
 retry:
-	client, action, err := acceptLogin(clientConn, hub)
+	client, action, err := acceptLogin(clientConn)
 	if err == io.EOF {
 		return
 	} else if err != nil {
@@ -85,12 +85,13 @@ retry:
 		}
 		goto retry
 	}
-	defer hub.Logout(client)
+	log.Printf("Logged in: %s\n", client.name)
+	defer logout(client)
 	if err := sendReturnCode(ResponseOk, clientConn); err != nil {
 		log.Printf("Error with %s: %s\n", client.name, err)
 	}
 
-	mainHandleClientLoop(clientConn, hub, client, controller)
+	mainHandleClientLoop(clientConn, client, controller)
 }
 
 func sendReturnCode(code Response, clientConn net.Conn) error {
@@ -98,7 +99,7 @@ func sendReturnCode(code Response, clientConn net.Conn) error {
 	return err
 }
 
-func mainHandleClientLoop(clientConn net.Conn, hub UserHub, client User, controller UserController) {
+func mainHandleClientLoop(clientConn net.Conn, client User, controller UserController) {
 	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
 
 	for {
@@ -112,10 +113,10 @@ func mainHandleClientLoop(clientConn net.Conn, hub UserHub, client User, control
 				return
 			}
 			if strings.HasPrefix(input.val, "/") {
-				runUserCommand(input.val[1:], hub, client, clientConn)
+				runUserCommand(input.val[1:], client, clientConn)
 				continue
 			}
-			err := sendReturnCode(hub.BroadcastMessage(input.val, client), clientConn)
+			err := sendReturnCode(broadcastMessageWait(input.val, client), clientConn)
 			if err != nil {
 				log.Println(input.err)
 				return
@@ -130,11 +131,11 @@ func mainHandleClientLoop(clientConn net.Conn, hub UserHub, client User, control
 	}
 }
 
-func runUserCommand(s string, hub UserHub, client User, clientConn net.Conn) {
+func runUserCommand(s string, client User, clientConn net.Conn) {
 	sendReturnCode(ResponseOk, clientConn)
 	switch s {
 	case "quit":
-		hub.Logout(client)
+		logout(client)
 		printCmd(clientConn, "logout")
 	default:
 		m := NewChatMessage(User{name: "server"}, "Invalid command")
@@ -176,23 +177,4 @@ func writeAsyncFromChan(writer io.Writer) (inputs chan string) {
 		}
 	}()
 	return inputs
-}
-
-func promptUsernameAndPassword(clientConn net.Conn) (User, error) {
-	r := bufio.NewReader(clientConn)
-	clientConn.Write([]byte("Username: "))
-	name, err := r.ReadString('\n')
-
-	if err != nil {
-		return User{}, err
-	}
-	name = name[0 : len(name)-1]
-	clientConn.Write([]byte("Password: "))
-	pass, err := r.ReadString('\n')
-	if err != nil {
-		return User{}, err
-	}
-	pass = pass[0 : len(pass)-1]
-
-	return User{name, pass}, nil
 }
