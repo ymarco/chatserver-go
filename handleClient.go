@@ -156,8 +156,8 @@ type ReadOutput struct {
 	err error
 }
 
-func readAsyncIntoChan(scanner *bufio.Scanner) (outputs chan ReadOutput) {
-	outputs = make(chan ReadOutput)
+func readAsyncIntoChan(scanner *bufio.Scanner) (<-chan ReadOutput) {
+	outputs := make(chan ReadOutput)
 	go func() {
 		for {
 			s, err := scanLine(scanner)

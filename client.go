@@ -114,7 +114,7 @@ func sendMessage(msg string, serverConn net.Conn) error {
 
 var ErrServerTimedOut = errors.New("server timed out")
 
-func expectOk(serverOutput chan ReadOutput) error {
+func expectOk(serverOutput <-chan ReadOutput) error {
 	select {
 	case ack := <-serverOutput:
 		if ack.err != nil {
