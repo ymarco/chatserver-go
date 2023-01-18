@@ -65,7 +65,7 @@ func acceptLogin(clientConn net.Conn, hub UserHub) (User, LoginAction, error) {
 }
 
 func handleClient(clientConn net.Conn, hub UserHub) {
-	defer clientConn.Close()
+	defer closePrintErr(clientConn)
 	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
 retry:
 	client, action, err := acceptLogin(clientConn, hub)

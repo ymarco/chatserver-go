@@ -24,12 +24,22 @@ func main() {
 		os.Exit(1)
 	}
 }
+type Closer interface {
+    Close() error
+}
+func closePrintErr(c Closer) {
+	err := c.Close()
+	if err != nil {
+		log.Println(err)
+	}
+}
+
 func server(port string) {
 	l, err := net.Listen("tcp4", port)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer l.Close()
+	defer closePrintErr(l)
 
 	hub := NewUserHub()
 	go mainHubLoop(hub)

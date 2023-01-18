@@ -50,8 +50,8 @@ func NewClientRun(port string) (c Client) {
 }
 
 func (client *Client) Close() {
-	client.output.Close()
-	client.input.Close()
+	closePrintErr(client.output)
+	closePrintErr(client.input)
 }
 func (client *Client) RegisterWait(user User, t *testing.T) {
 	client.user = user

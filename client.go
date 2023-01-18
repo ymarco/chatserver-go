@@ -19,7 +19,7 @@ func client(port string, in io.Reader, out io.Writer) {
 	haveUser := false
 reconnect:
 	serverConn, err := connectToPortWithRetry(port, out)
-	defer serverConn.Close()
+	defer closePrintErr(serverConn)
 	log.Printf("Connected to %s\n", serverConn.RemoteAddr())
 	userInput := bufio.NewScanner(in)
 retryLogin:
