@@ -16,14 +16,16 @@ const (
 	ActionRegister
 )
 
-func strToLoginAction(s string) (AuthAction, error) {
+var ErrClientHasQuit = io.EOF
+
+func strToAuthAction(s string) (AuthAction, error) {
 	switch s {
 	case "r":
 		return ActionRegister, nil
 	case "l":
 		return ActionLogin, nil
 	case "": // happens when a user quits without choosing
-		return ActionRegister, io.EOF
+		return ActionRegister, ErrClientHasQuit
 	default:
 		return ActionRegister, fmt.Errorf("weird output from clientConn: %s", s)
 	}
@@ -40,36 +42,36 @@ func scanLine(s *bufio.Scanner) (string, error) {
 	return s.Text(), nil
 }
 
-func acceptLogin(clientConn net.Conn) (User, AuthAction, error) {
+func acceptAuth(clientConn net.Conn) (*User, AuthAction, error) {
 	clientOutput := bufio.NewScanner(clientConn)
 	choice, err := scanLine(clientOutput)
 	if err != nil {
-		return User{}, ActionRegister, err
+		return nil, ActionRegister, err
 	}
-	action, err := strToLoginAction(choice)
+	action, err := strToAuthAction(choice)
 	if err != nil {
-		return User{}, ActionRegister, err
+		return nil, ActionRegister, err
 	}
 
 	username, err := scanLine(clientOutput)
 	if err != nil {
-		return User{}, ActionRegister, err
+		return nil, ActionRegister, err
 	}
 
 	password, err := scanLine(clientOutput)
 	if err != nil {
-		return User{}, ActionRegister, err
+		return nil, ActionRegister, err
 	}
 
-	return User{username, password}, action, nil
+	return &User{username, password}, action, nil
 }
 
 func handleClient(clientConn net.Conn) {
 	defer closePrintErr(clientConn)
 	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
 retry:
-	client, action, err := acceptLogin(clientConn)
-	if err == io.EOF {
+	client, action, err := acceptAuth(clientConn)
+	if err == ErrClientHasQuit {
 		return
 	} else if err != nil {
 		log.Printf("Error: %s", err)
@@ -77,45 +79,45 @@ retry:
 	}
 
 	controller := NewUserController()
-	response := tryToLogin(action, client, controller)
+	response := tryToAuthenticate(action, client, controller)
 	if response != ResponseOk {
-		if err := sendReturnCode(response, clientConn); err != nil {
+		if err := sendResponse(response, clientConn); err != nil {
 			log.Printf("Error with %s: %s\n", client.name, err)
 			return
 		}
 		goto retry
 	}
 	defer logout(client)
-	if err := sendReturnCode(ResponseOk, clientConn); err != nil {
+	if err := sendResponse(ResponseOk, clientConn); err != nil {
 		log.Printf("Error with %s: %s\n", client.name, err)
 	}
 
 	mainHandleClientLoop(clientConn, client, controller)
 }
 
-func sendReturnCode(code Response, clientConn net.Conn) error {
-	_, err := clientConn.Write([]byte(string(code) + "\n"))
+func sendResponse(r Response, clientConn net.Conn) error {
+	_, err := clientConn.Write([]byte(string(r) + "\n"))
 	return err
 }
 
-func mainHandleClientLoop(clientConn net.Conn, client User, controller UserController) {
+func mainHandleClientLoop(clientConn net.Conn, client *User, controller UserController) {
 	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
 
 	for {
 		select {
 		case input := <-clientInput:
-			if input.err == io.EOF {
-				// client disconnected
+			if input.err == ErrClientHasQuit {
 				return
 			} else if input.err != nil {
 				log.Println(input.err)
 				return
 			}
+			var err error = nil
 			if strings.HasPrefix(input.val, "/") {
-				runUserCommand(input.val[1:], client, clientConn)
-				continue
+				err = runUserCommand(input.val[1:], client, clientConn)
+			} else {
+				err = sendResponse(broadcastMessageWait(input.val, client), clientConn)
 			}
-			err := sendReturnCode(broadcastMessageWait(input.val, client), clientConn)
 			if err != nil {
 				log.Println(input.err)
 				return
@@ -123,30 +125,34 @@ func mainHandleClientLoop(clientConn net.Conn, client User, controller UserContr
 		case <-controller.quit:
 			fmt.Println("quit")
 			return
-		case msg := <-controller.messages:
-			printMsg(clientConn, msg)
+		case msg := <-controller.writeMessageToClient:
+			passMessageToClient(clientConn, msg)
 			msg.Ack()
 		}
 	}
 }
 
-func runUserCommand(s string, client User, clientConn net.Conn) {
-	sendReturnCode(ResponseOk, clientConn)
+const LogoutCmd = "$logout$"
+func runUserCommand(s string, client *User, clientConn net.Conn) error {
+	err := sendResponse(ResponseOk, clientConn)
+	if err != nil {
+		return err
+	}
 	switch s {
 	case "quit":
 		logout(client)
-		printCmd(clientConn, "logout")
+		return passCommandToRunToClient(clientConn, LogoutCmd)
 	default:
-		m := NewChatMessage(User{name: "server"}, "Invalid command")
-		printMsg(clientConn, m)
+		m := NewChatMessage(&User{name: "server"}, "Invalid command")
+		return passMessageToClient(clientConn, m)
 	}
 }
 
-func printMsg(writer io.Writer, msg ChatMessage) error {
+func passMessageToClient(writer io.Writer, msg ChatMessage) error {
 	_, err := writer.Write([]byte(msg.user.name + ": " + msg.content + "\n"))
 	return err
 }
-func printCmd(writer io.Writer, cmd string) error {
+func passCommandToRunToClient(writer io.Writer, cmd string) error {
 	_, err := writer.Write([]byte(cmd + "\n"))
 	return err
 }

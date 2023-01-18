@@ -13,13 +13,13 @@ const (
 
 type OnlineStatus int
 type UserController struct {
-	messages chan ChatMessage
-	quit     chan struct{}
+	writeMessageToClient chan ChatMessage
+	quit                 chan struct{}
 }
 
 func NewUserController() UserController {
 	return UserController{quit: make(chan struct{}),
-		messages: make(chan ChatMessage)}
+		writeMessageToClient: make(chan ChatMessage)}
 }
 
 type User struct {
@@ -30,11 +30,13 @@ type Response string
 
 const (
 	ResponseOk                 Response = "Ok"
-	ResponseUserAlreadyOnline           = "User already online"
-	ResponseUsernameExists              = "Username already exists"
-	ResponseInvalidCredentials          = "Wrong username or password"
-	ResponseMsgFailedForSome            = "Message failed to send to some users"
-	ResponseMsgFailedToAll              = "Message failed to send to any users"
+	ResponseUserAlreadyOnline  Response = "User already online"
+	ResponseUsernameExists     Response = "Username already exists"
+	ResponseInvalidCredentials Response = "Wrong username or password"
+	ResponseMsgFailedForSome   Response = "Message failed to send to some users"
+	ResponseMsgFailedToAll     Response = "Message failed to send to any users"
+	// should be returned along with a normal error type
+	ResponseIoErrorOccured Response = "IO error, couldn't get a response"
 )
 
 var activeUsers = make(map[User]UserController)
@@ -51,7 +53,7 @@ func (m *ChatMessage) WaitForAck() Response {
 	return <-m.ack
 }
 
-func tryToLogin(action AuthAction, user User, controller UserController) Response {
+func tryToAuthenticate(action AuthAction, user *User, controller UserController) Response {
 	activeUsersLock.Lock()
 	defer activeUsersLock.Unlock()
 
@@ -63,7 +65,7 @@ func tryToLogin(action AuthAction, user User, controller UserController) Respons
 		pass, exists := userDB[user.name]
 		if (!exists) || pass != user.password {
 			return ResponseInvalidCredentials
-		} else if _, isActive := activeUsers[user]; isActive {
+		} else if _, isActive := activeUsers[*user]; isActive {
 			return ResponseUserAlreadyOnline
 		}
 	case ActionRegister:
@@ -73,24 +75,24 @@ func tryToLogin(action AuthAction, user User, controller UserController) Respons
 		}
 	}
 	userDB[user.name] = user.password
-	activeUsers[user] = controller
+	activeUsers[*user] = controller
 	log.Printf("Logged in: %s\n", user.name)
 	return ResponseOk
 }
-func logout(user User) {
+func logout(user *User) {
 	userDBLock.Lock()
 	defer userDBLock.Unlock()
-	delete(activeUsers, user)
+	delete(activeUsers, *user)
 	log.Printf("Logged out: %s\n", user.name)
 }
 
 type ChatMessage struct {
 	ack     chan Response
-	user    User
+	user    *User
 	content string
 }
 
-func NewChatMessage(user User, content string) ChatMessage {
+func NewChatMessage(user *User, content string) ChatMessage {
 	return ChatMessage{make(chan Response, 1), user, content}
 }
 
@@ -109,7 +111,7 @@ func tryQuitting(controller UserController, user User) {
 	}
 }
 
-func broadcastMessageWait(contents string, sender User) Response {
+func broadcastMessageWait(contents string, sender *User) Response {
 	activeUsersLock.Lock()
 	cp := copy(activeUsers)
 	activeUsersLock.Unlock()
@@ -117,17 +119,17 @@ func broadcastMessageWait(contents string, sender User) Response {
 	return sendMessageToAllUsersWait(contents, sender, cp)
 }
 
-func sendMessageToAllUsersWait(contents string, sender User, users map[User]UserController) Response {
+func sendMessageToAllUsersWait(contents string, sender *User, users map[User]UserController) Response {
 	totalToSendTo := len(users) - 1
 	succeeded := 0
 	for user, controller := range users {
-		if user == sender {
+		if user == *sender {
 			continue
 		}
 
 		msg := NewChatMessage(sender, contents)
 		select {
-		case controller.messages <- msg:
+		case controller.writeMessageToClient <- msg: //TODO
 			msg.WaitForAck()
 			succeeded++
 		case <-time.After(time.Millisecond * 200):

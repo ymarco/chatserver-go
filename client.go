@@ -19,20 +19,22 @@ reconnect:
 	defer closePrintErr(serverConn)
 	log.Printf("Connected to %s\n", serverConn.RemoteAddr())
 	userInput := bufio.NewScanner(in)
-	me, err := loginWithRetry(userInput, out, serverConn)
+	me, err := authenticateWithRetry(userInput, out, serverConn)
 	if err == io.EOF {
-		fmt.Fprintln(out, "Server closed, retrying in 5 seconds")
-		time.Sleep(5 * time.Second)
+		fmt.Fprintln(out, "Server closed, retrying")
 		goto reconnect
 	} else if err != nil {
 		log.Fatalln(err)
 	}
 	fmt.Fprintf(out, "Logged in as %s\n\n", me.name)
-	err = mainClientLoop(me, userInput, out, serverConn)
+	err = handleClientMessages(me, userInput, out, serverConn)
 	switch err {
 	case nil:
 		panic("unreachable, mainClientLoop should return only on error")
-	case io.EOF, ErrServerTimedOut, ErrServerQuit, net.ErrClosed:
+	case ErrServerQuit:
+		log.Println("Logged out, reconnecting")
+		goto reconnect
+	case io.EOF, ErrServerTimedOut, net.ErrClosed:
 		log.Println(out, "Server closed, retrying in 5 seconds")
 		time.Sleep(5 * time.Second)
 		goto reconnect
@@ -40,21 +42,20 @@ reconnect:
 		fmt.Fprintln(out, err)
 	}
 }
-func loginWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn net.Conn) (User, error) {
-retry:
-	me, action, err := promptForLoginTypeAndUser(userInput, out)
-	if err == ErrEmptyUsernameOrPassword {
-		goto retry
-	} else if err != nil {
-		return User{}, err
-	}
-	err = LoginToServer(out, me, action, serverConn)
-	if err == ErrInvalidAuth {
-		goto retry
-	}
-	return me, err
-}
+func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn net.Conn) (*User, error) {
+	for {
+		me, action, err := promptForAuthTypeAndUser(userInput, out)
+		if err != nil {
+			return nil, err
+		}
 
+		err = AuthToServer(out, me, action, serverConn)
+		if err != ErrInvalidAuth {
+			return me, err
+		}
+	}
+
+}
 func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 reconnect2:
 	serverConn, err := net.Dial("tcp4", port)
@@ -71,10 +72,9 @@ reconnect2:
 	return serverConn, err
 }
 
-var ErrSelfQuit = errors.New("our client has quit")
 var ErrServerQuit = errors.New("server logged us out")
 
-func mainClientLoop(me User, userInput_ *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
+func handleClientMessages(me *User, userInput_ *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
 	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
 	userInput := readAsyncIntoChan(userInput_)
 	for {
@@ -83,15 +83,13 @@ func mainClientLoop(me User, userInput_ *bufio.Scanner, out io.Writer, serverCon
 			if msg.err != nil {
 				return msg.err
 			}
-			if msg.val == "logout" {
+			if msg.val == LogoutCmd {
 				return ErrServerQuit
 			} else {
 				fmt.Fprintln(out, msg.val)
 			}
 		case line := <-userInput:
-			if line.err == io.EOF {
-				return ErrSelfQuit
-			} else if line.err != nil {
+			if line.err != nil {
 				return line.err
 			}
 			if err := sendMessage(line.val, serverConn); err != nil {
@@ -130,10 +128,10 @@ func expectOk(serverOutput <-chan ReadOutput) error {
 
 }
 
-func promptForLoginTypeAndUser(userInput *bufio.Scanner, out io.Writer) (User, AuthAction, error) {
+func promptForAuthTypeAndUser(userInput *bufio.Scanner, out io.Writer) (*User, AuthAction, error) {
 	action, err := ChooseLoginOrRegister(userInput, out)
 	if err != nil {
-		return User{}, action, err
+		return nil, action, err
 	}
 
 	me, err := promptForUsernameAndPassword(userInput, out)
@@ -142,9 +140,9 @@ func promptForLoginTypeAndUser(userInput *bufio.Scanner, out io.Writer) (User, A
 
 var ErrInvalidAuth = errors.New("Username exists and such")
 
-func LoginToServer(out io.Writer, user User, action AuthAction,
+func AuthToServer(out io.Writer, user *User, action AuthAction,
 	serverConn io.ReadWriter) error {
-	err, response := login(action, user, serverConn)
+	err, response := authenticate(action, user, serverConn)
 	if err != nil {
 		return err
 	}
@@ -176,25 +174,26 @@ func ChooseLoginOrRegister(userInput *bufio.Scanner, out io.Writer) (AuthAction,
 
 var ErrEmptyUsernameOrPassword = errors.New("empty username or password")
 
-func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (User, error) {
+func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (*User, error) {
 	fmt.Fprintf(out, "Username:\n")
+
 	username, err := scanLine(userInput)
 	if err != nil {
-		return User{}, err
+		return nil, err
 	}
 	if username == "" {
-		return User{}, ErrEmptyUsernameOrPassword
+		return nil, ErrEmptyUsernameOrPassword
 	}
 
 	fmt.Fprintf(out, "Password:\n")
 	password, err := scanLine(userInput)
 	if err != nil {
-		return User{}, err
+		return nil, err
 	}
 	if password == "" {
-		return User{}, ErrEmptyUsernameOrPassword
+		return nil, ErrEmptyUsernameOrPassword
 	}
-	return User{username, password}, nil
+	return &User{username, password}, nil
 }
 
 var ErrUsernameExists = errors.New("username already exists")
@@ -202,35 +201,42 @@ var ErrUserOnline = errors.New("username already online")
 var ErrInvalidCredentials = errors.New("username already online")
 var ErrOddOutput = errors.New("weird output from server")
 
-func login(action AuthAction, user User, serverConn io.ReadWriter) (error, Response) {
+func authenticate(action AuthAction, user *User, serverConn io.ReadWriter) (error, Response) {
+	actionCh := ""
 	switch action {
 	case ActionLogin:
-		serverConn.Write([]byte("l\n"))
+		actionCh = "l"
 	case ActionRegister:
-		serverConn.Write([]byte("r\n"))
+		actionCh = "r"
 	}
 
-	serverConn.Write([]byte(user.name + "\n"))
-	serverConn.Write([]byte(user.password + "\n"))
+	_, err := serverConn.Write([]byte(
+		actionCh + "\n" +
+			user.name + "\n" +
+			user.password + "\n"))
+	if err != nil {
+		return err, ResponseIoErrorOccured
+	}
 
 	serverOutput := bufio.NewScanner(serverConn)
 	status, err := scanLine(serverOutput)
+
 	if err != nil {
-		return err, ResponseOk
+		return err, ResponseIoErrorOccured
 	}
-	switch status {
-	case string(ResponseOk):
+
+	switch Response(status) {
+	case ResponseOk:
 		return nil, ResponseOk
-	case string(ResponseUserAlreadyOnline):
+	case ResponseUserAlreadyOnline:
 		return nil, ResponseUserAlreadyOnline
-	case string(ResponseUsernameExists):
+	case ResponseUsernameExists:
 		return nil, ResponseUsernameExists
-	case string(ResponseInvalidCredentials):
+	case ResponseInvalidCredentials:
 		return nil, ResponseInvalidCredentials
 
 	default:
 		log.Println(status)
 		return ErrOddOutput, ResponseOk
-
 	}
 }

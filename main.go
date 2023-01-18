@@ -24,9 +24,11 @@ func main() {
 		os.Exit(1)
 	}
 }
+
 type Closer interface {
-    Close() error
+	Close() error
 }
+
 func closePrintErr(c Closer) {
 	err := c.Close()
 	if err != nil {
@@ -36,6 +38,7 @@ func closePrintErr(c Closer) {
 
 func server(port string) {
 	l, err := net.Listen("tcp4", port)
+	log.Printf("Listening at %s\n", l.Addr())
 	if err != nil {
 		log.Fatalln(err)
 	}
