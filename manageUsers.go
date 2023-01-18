@@ -74,6 +74,7 @@ func tryToLogin(action AuthAction, user User, controller UserController) Respons
 	}
 	userDB[user.name] = user.password
 	activeUsers[user] = controller
+	log.Printf("Logged in: %s\n", user.name)
 	return ResponseOk
 }
 func logout(user User) {

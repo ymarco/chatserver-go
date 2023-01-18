@@ -85,7 +85,6 @@ retry:
 		}
 		goto retry
 	}
-	log.Printf("Logged in: %s\n", client.name)
 	defer logout(client)
 	if err := sendReturnCode(ResponseOk, clientConn); err != nil {
 		log.Printf("Error with %s: %s\n", client.name, err)
