@@ -14,32 +14,15 @@ import (
 
 func client(port string, in io.Reader, out io.Writer) {
 	log.SetOutput(out)
-	me := User{"", ""}
-	action := ActionRegister
-	haveUser := false
 reconnect:
 	serverConn, err := connectToPortWithRetry(port, out)
 	defer closePrintErr(serverConn)
 	log.Printf("Connected to %s\n", serverConn.RemoteAddr())
 	userInput := bufio.NewScanner(in)
-retryLogin:
-	if !haveUser {
-		me, action, err = promptForLoginTypeAndUser(userInput, out)
-		if err == io.EOF {
-			log.Println(out, "Server closed, retrying in 5 seconds")
-			goto reconnect
-		} else if err == ErrEmptyUsernameOrPassword {
-			goto retryLogin
-		} else if err != nil {
-			log.Fatalln(err)
-		}
-	}
-	err = LoginToServer(out, me, action, serverConn)
-	if err == ErrLogin {
-		goto retryLogin
-	}
+	me, err := loginWithRetry(userInput, out, serverConn)
 	if err == io.EOF {
 		fmt.Fprintln(out, "Server closed, retrying in 5 seconds")
+		time.Sleep(5 * time.Second)
 		goto reconnect
 	} else if err != nil {
 		log.Fatalln(err)
@@ -49,20 +32,27 @@ retryLogin:
 	switch err {
 	case nil:
 		panic("unreachable, mainClientLoop should return only on error")
-	case io.EOF:
-		fallthrough
-	case ErrServerTimedOut:
-		fallthrough
-	case net.ErrClosed:
+	case io.EOF, ErrServerTimedOut, ErrServerQuit, net.ErrClosed:
 		log.Println(out, "Server closed, retrying in 5 seconds")
 		time.Sleep(5 * time.Second)
-		goto reconnect
-	case ErrServerQuit:
-		haveUser = false
 		goto reconnect
 	default:
 		fmt.Fprintln(out, err)
 	}
+}
+func loginWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn net.Conn) (User, error) {
+retry:
+	me, action, err := promptForLoginTypeAndUser(userInput, out)
+	if err == ErrEmptyUsernameOrPassword {
+		goto retry
+	} else if err != nil {
+		return User{}, err
+	}
+	err = LoginToServer(out, me, action, serverConn)
+	if err == ErrInvalidAuth {
+		goto retry
+	}
+	return me, err
 }
 
 func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
@@ -140,7 +130,7 @@ func expectOk(serverOutput chan ReadOutput) error {
 
 }
 
-func promptForLoginTypeAndUser(userInput *bufio.Scanner, out io.Writer) (User, LoginAction, error) {
+func promptForLoginTypeAndUser(userInput *bufio.Scanner, out io.Writer) (User, AuthAction, error) {
 	action, err := ChooseLoginOrRegister(userInput, out)
 	if err != nil {
 		return User{}, action, err
@@ -150,30 +140,22 @@ func promptForLoginTypeAndUser(userInput *bufio.Scanner, out io.Writer) (User, L
 	return me, action, nil
 }
 
-var ErrLogin = errors.New("Username exists and such")
+var ErrInvalidAuth = errors.New("Username exists and such")
 
-func LoginToServer(out io.Writer, user User, action LoginAction,
+func LoginToServer(out io.Writer, user User, action AuthAction,
 	serverConn io.ReadWriter) error {
-	err := login(action, user, serverConn)
-	switch err {
-	case nil:
-		// all good
-	case ErrUserOnline:
-		fmt.Fprintln(out, "User already online")
-		return ErrLogin
-	case ErrUsernameExists:
-		fmt.Fprintln(out, "Username exists")
-		return ErrLogin
-	case ErrInvalidCredentials:
-		fmt.Fprintln(out, "Wrong username or password, try again")
-		return ErrLogin
-	default:
+	err, response := login(action, user, serverConn)
+	if err != nil {
 		return err
+	}
+	if response != ResponseOk {
+		fmt.Println(response)
+		return ErrInvalidAuth
 	}
 	return nil
 }
 
-func ChooseLoginOrRegister(userInput *bufio.Scanner, out io.Writer) (LoginAction, error) {
+func ChooseLoginOrRegister(userInput *bufio.Scanner, out io.Writer) (AuthAction, error) {
 	for {
 		fmt.Fprintln(out, "Type r to register, l to login")
 
@@ -220,7 +202,7 @@ var ErrUserOnline = errors.New("username already online")
 var ErrInvalidCredentials = errors.New("username already online")
 var ErrOddOutput = errors.New("weird output from server")
 
-func login(action LoginAction, user User, serverConn io.ReadWriter) error {
+func login(action AuthAction, user User, serverConn io.ReadWriter) (error, Response) {
 	switch action {
 	case ActionLogin:
 		serverConn.Write([]byte("l\n"))
@@ -234,18 +216,21 @@ func login(action LoginAction, user User, serverConn io.ReadWriter) error {
 	serverOutput := bufio.NewScanner(serverConn)
 	status, err := scanLine(serverOutput)
 	if err != nil {
-		return err
+		return err, ResponseOk
 	}
 	switch status {
-	case "Ok":
-		return nil
-	case "exists":
-		return ErrUsernameExists
-	case "online":
-		return ErrUserOnline
-	case "invalidCredentials":
-		return ErrInvalidCredentials
+	case string(ResponseOk):
+		return nil, ResponseOk
+	case string(ResponseUserAlreadyOnline):
+		return nil, ResponseUserAlreadyOnline
+	case string(ResponseUsernameExists):
+		return nil, ResponseUsernameExists
+	case string(ResponseInvalidCredentials):
+		return nil, ResponseInvalidCredentials
+
 	default:
-		return ErrOddOutput
+		log.Println(status)
+		return ErrOddOutput, ResponseOk
+
 	}
 }

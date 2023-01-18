@@ -89,7 +89,7 @@ func tryToLogin(action AuthAction, user User, controller UserController) Respons
 }
 func logout(user User) {
 	userDBLock.Lock()
-	defer activeUsersLock.Unlock()
+	defer userDBLock.Unlock()
 	delete(activeUsers, user)
 	log.Printf("Logged out: %s\n", user.name)
 }

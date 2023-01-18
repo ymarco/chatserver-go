@@ -56,7 +56,9 @@ func (client *Client) Close() {
 func (client *Client) RegisterWait(user User, t *testing.T) {
 	client.user = user
 	clientOut := bufio.NewScanner(client.output)
-	expect(clientOut, "Connected successfully", t)
+	if err := skipLine(clientOut); err != nil { // Connected as ...
+		t.Error(err)
+	}
 	expect(clientOut, "Type r to register, l to login", t)
 	_, err := client.input.Write([]byte("r\n"))
 	if err != nil {
@@ -101,13 +103,17 @@ func receiveMessages(clientOut io.Reader, n int, t *testing.T) []string {
 	}
 	return res
 }
+func skipLine(s *bufio.Scanner) error {
+	_, err := scanLine(s)
+	return err
+}
 func expect(clientOut *bufio.Scanner, expected string, t *testing.T) {
 	s, err := scanLine(clientOut)
 	if err != nil {
 		t.Error("expect ", err)
 	}
 	if s != expected {
-		t.Error(ErrOddOutput)
+		t.Error(ErrOddOutput, s)
 	}
 
 }
