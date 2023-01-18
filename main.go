@@ -41,16 +41,12 @@ func server(port string) {
 	}
 	defer closePrintErr(l)
 
-	hub := NewUserHub()
-	go mainHubLoop(hub)
-	defer hub.Quit()
-
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			log.Fatalln(err)
 		}
 		log.Printf("Connected: %s\n", c.RemoteAddr())
-		go handleClient(c, hub)
+		go handleClient(c)
 	}
 }

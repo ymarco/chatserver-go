@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"sync"
 	"time"
 )
 
@@ -36,8 +37,13 @@ const (
 	ResponseMsgFailedToAll              = "Message failed to send to any users"
 )
 
+var activeUsers = make(map[User]UserController)
+var activeUsersLock = sync.Mutex{}
+var userDB = make(map[string]string)
+var userDBLock = sync.Mutex{}
+
 type Message struct {
-	ack  chan ReturnCode
+	ack  chan Response
 	user User
 }
 
@@ -56,48 +62,36 @@ func (m *Message) WaitForAck() Response {
 	return <-m.ack
 }
 
-type LoginMessage struct {
-	Message
-	controller UserController
-	action     LoginAction
-}
+func tryToLogin(action AuthAction, user User, controller UserController) Response {
+	activeUsersLock.Lock()
+	defer activeUsersLock.Unlock()
 
-func NewLoginMessage(user User, controller UserController, action LoginAction) LoginMessage {
-	return LoginMessage{
-		NewMessage(user),
-		controller,
-		action,
-	}
-}
-func tryToLogin(newLogin LoginMessage, hub UserHub) {
-	switch newLogin.action {
+	userDBLock.Lock()
+	defer userDBLock.Unlock()
+
+	switch action {
 	case ActionLogin:
-		pass, exists := hub.userDB[newLogin.user.name]
-		if (!exists) || pass != newLogin.user.password {
-			newLogin.AckWithCode(ReturnInvalidCredentials)
-			return
-		} else if _, isActive := hub.activeUsers[newLogin.user]; isActive {
-			newLogin.AckWithCode(ReturnUserAlreadyOnline)
-			return
+		pass, exists := userDB[user.name]
+		if (!exists) || pass != user.password {
+			return ResponseInvalidCredentials
+		} else if _, isActive := activeUsers[user]; isActive {
+			return ResponseUserAlreadyOnline
 		}
 	case ActionRegister:
-		if _, exists := hub.userDB[newLogin.user.name]; exists {
-			newLogin.AckWithCode(ReturnUsernameExists)
-			return
+		if _, exists := userDB[user.name]; exists {
+			return ResponseUsernameExists
 
 		}
 	}
-	hub.userDB[newLogin.user.name] = newLogin.user.password
-	hub.activeUsers[newLogin.user] = newLogin.control
-	newLogin.AckWithCode(ReturnOk)
+	userDB[user.name] = user.password
+	activeUsers[user] = controller
+	return ResponseOk
 }
-
-type LogoutMessage struct {
-	Message
-}
-
-func NewLogoutMessage(user User) LogoutMessage {
-	return LogoutMessage{NewMessage(user)}
+func logout(user User) {
+	userDBLock.Lock()
+	defer activeUsersLock.Unlock()
+	delete(activeUsers, user)
+	log.Printf("Logged out: %s\n", user.name)
 }
 
 type ChatMessage struct {
@@ -110,51 +104,15 @@ func NewChatMessage(user User, content string) ChatMessage {
 }
 
 type UserHub struct {
-	activeUsers   map[User]UserController
-	userDB        map[string]string
-	logins        chan LoginMessage
-	logouts       chan LogoutMessage
-	messageStream chan ChatMessage
-	quit          chan Message
+	quit chan Message
 }
 
 func NewUserHub() UserHub {
 	return UserHub{
-		logins:        make(chan LoginMessage, 256),
-		logouts:       make(chan LogoutMessage, 256),
-		messageStream: make(chan ChatMessage, 256),
-		quit:          make(chan Message, 256),
-		activeUsers:   make(map[User]UserController),
-		userDB:        make(map[string]string),
+		quit: make(chan Message, 256),
 	}
 }
 
-// Manage users. Return only when a message is received from quit. Clients send
-// messages to the channels logins, logouts, messageStream and quit, and
-// mainHubLoop handles the state and update all the clients.
-func mainHubLoop(hub UserHub) {
-	for {
-		select {
-		case newLogin := <-hub.logins:
-			tryToLogin(newLogin, hub)
-			log.Printf("Logged in: %s\n", newLogin.user.name)
-		case logout := <-hub.logouts:
-			delete(hub.activeUsers, logout.user)
-			logout.Ack()
-			log.Printf("Logged out: %s\n", logout.user.name)
-		case msg := <-hub.messageStream:
-			go sendMessageToAllUsers(msg, copy(hub.activeUsers))
-			//log.Printf("%s: %s\n", msg.user.name, msg.content)
-		case q := <-hub.quit:
-			for user, controller := range hub.activeUsers {
-				go tryQuitting(controller, user)
-			}
-			q.Ack()
-			log.Println("Quitting")
-			return
-		}
-	}
-}
 func copy(m map[User]UserController) map[User]UserController {
 	new := make(map[User]UserController)
 	for a, b := range m {
@@ -170,36 +128,23 @@ func tryQuitting(controller UserController, user User) {
 	}
 }
 
-func (hub *UserHub) Login(user User, action LoginAction, controller UserController) Response {
-	m := NewLoginMessage(user, controller, action)
-	hub.logins <- m
-	return m.WaitForAck()
-}
-func (hub *UserHub) Logout(user User) {
-	m := NewLogoutMessage(user)
-	hub.logouts <- m
-	m.WaitForAck()
-}
-func (hub *UserHub) BroadcastMessage(content string, sender User) Response {
-	m := NewChatMessage(sender, content)
-	hub.messageStream <- m
-	return m.WaitForAck()
-}
-func (hub *UserHub) Quit() {
-	m := NewMessage(User{})
-	hub.quit <- m
-	m.WaitForAck()
+func broadcastMessageWait(contents string, sender User) Response {
+	activeUsersLock.Lock()
+	cp := copy(activeUsers)
+	activeUsersLock.Unlock()
+
+	return sendMessageToAllUsersWait(contents, sender, cp)
 }
 
-func sendMessageToAllUsers(msg ChatMessage, users map[User]UserController) {
+func sendMessageToAllUsersWait(contents string, sender User, users map[User]UserController) Response {
 	totalToSendTo := len(users) - 1
 	succeeded := 0
 	for user, controller := range users {
-		if user == msg.user {
+		if user == sender {
 			continue
 		}
 
-		msg := NewChatMessage(msg.user, msg.content)
+		msg := NewChatMessage(sender, contents)
 		select {
 		case controller.messages <- msg:
 			msg.WaitForAck()
@@ -208,11 +153,11 @@ func sendMessageToAllUsers(msg ChatMessage, users map[User]UserController) {
 			log.Printf("Failed to send msg to user %s\n", user.name)
 		}
 	}
-	code := ResponseOk
 	if succeeded == 0 && totalToSendTo != 0 {
-		code = ResponseMsgFailedToAll
+		return ResponseMsgFailedToAll
 	} else if succeeded != totalToSendTo {
-		code = ResponseMsgFailedForSome
+		return ResponseMsgFailedForSome
+	} else {
+		return ResponseOk
 	}
-	msg.AckWithCode(code)
 }
