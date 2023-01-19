@@ -8,12 +8,10 @@ import (
 
 type ClientController struct {
 	writeMessageToClient chan ChatMessage
-	quit                 chan struct{}
 }
 
 func NewClientController() *ClientController {
-	return &ClientController{quit: make(chan struct{}),
-		writeMessageToClient: make(chan ChatMessage)}
+	return &ClientController{writeMessageToClient: make(chan ChatMessage)}
 }
 
 type User struct {
