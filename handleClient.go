@@ -69,7 +69,7 @@ func acceptAuth(clientConn net.Conn) (*User, AuthAction, error) {
 func handleClient(clientConn net.Conn) {
 	defer closePrintErr(clientConn)
 	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
-	client, controller, err := tryToAcceptAuthRetry(clientConn)
+	client, receiveMsg, err := tryToAcceptAuthRetry(clientConn)
 	if err == ErrClientHasQuit {
 		return
 	} else if err != nil {
@@ -81,19 +81,19 @@ func handleClient(clientConn net.Conn) {
 		log.Printf("Error with %s: %s\n", client.name, err)
 	}
 
-	handleMessagesLoop(clientConn, client, controller)
+	handleMessagesLoop(clientConn, client, receiveMsg)
 }
 
-func tryToAcceptAuthRetry(clientConn net.Conn) (*User, *ClientController, error) {
+func tryToAcceptAuthRetry(clientConn net.Conn) (*User, <-chan ChatMessage, error) {
 	for {
 		client, action, err := acceptAuth(clientConn)
 		if err != nil {
 			return nil, nil, err
 		}
-		controller := NewClientController()
-		response := tryToAuthenticate(action, client, controller)
+		send, receive := NewMessageChannel()
+		response := tryToAuthenticate(action, client, send)
 		if response == ResponseOk {
-			return client, controller, nil
+			return client, receive, nil
 		} else {
 			// try to communicate that we're retrying
 			err := sendResponse(response, clientConn)
@@ -111,7 +111,7 @@ func sendResponse(r Response, clientConn net.Conn) error {
 	return err
 }
 
-func handleMessagesLoop(clientConn net.Conn, client *User, clientController *ClientController) {
+func handleMessagesLoop(clientConn net.Conn, client *User, receiveMsg <-chan ChatMessage) {
 	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
 
 	for {
@@ -128,10 +128,7 @@ func handleMessagesLoop(clientConn net.Conn, client *User, clientController *Cli
 				log.Println(input.err)
 				return
 			}
-		case <-clientController.quit:
-			fmt.Println("quit")
-			return
-		case msg := <-clientController.writeMessageToClient:
+		case msg := <-receiveMsg:
 			err := passMessageToClient(clientConn, msg)
 			msg.Ack()
 			if err != nil {
@@ -169,7 +166,7 @@ func runUserCommand(s string, client *User, clientConn net.Conn) error {
 }
 
 func passMessageToClient(writer io.Writer, msg ChatMessage) error {
-	_, err := writer.Write([]byte(msg.user.name + ": " + msg.content + "\n"))
+	_, err := writer.Write([]byte(msg.sender.name + ": " + msg.content + "\n"))
 	return err
 }
 func passCommandToRunToClient(writer io.Writer, cmd string) error {

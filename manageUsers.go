@@ -6,12 +6,9 @@ import (
 	"time"
 )
 
-type ClientController struct {
-	writeMessageToClient chan ChatMessage
-}
-
-func NewClientController() *ClientController {
-	return &ClientController{writeMessageToClient: make(chan ChatMessage)}
+func NewMessageChannel() (send chan<- ChatMessage, recieve <-chan ChatMessage) {
+	res := make(chan ChatMessage)
+	return res, res
 }
 
 type User struct {
@@ -31,13 +28,14 @@ const (
 	ResponseIoErrorOccurred Response = "IO error, couldn't get a response"
 )
 
-var activeUsers = make(map[User]*ClientController)
+var activeUsers = make(map[User]chan<- ChatMessage)
 var activeUsersLock = sync.RWMutex{}
 
 var userDB = make(map[string]string)
 var userDBLock = sync.RWMutex{}
 
-func tryToAuthenticate(action AuthAction, user *User, controller *ClientController) Response {
+func tryToAuthenticate(action AuthAction, user *User,
+	sendMessage chan<- ChatMessage) Response {
 	activeUsersLock.Lock()
 	defer activeUsersLock.Unlock()
 
@@ -59,7 +57,7 @@ func tryToAuthenticate(action AuthAction, user *User, controller *ClientControll
 		}
 	}
 	userDB[user.name] = user.password
-	activeUsers[*user] = controller
+	activeUsers[*user] = sendMessage
 	log.Printf("Logged in: %s\n", user.name)
 	return ResponseOk
 }
@@ -72,7 +70,7 @@ func logout(user *User) {
 
 type ChatMessage struct {
 	ack     chan Response
-	user    *User
+	sender  *User
 	content string
 }
 
@@ -80,8 +78,6 @@ func NewChatMessage(user *User, content string) ChatMessage {
 	return ChatMessage{make(chan Response, 1), user, content}
 }
 
-func copyHashMap(m map[User]*ClientController) map[User]*ClientController {
-	res := make(map[User]*ClientController)
 func (m *ChatMessage) Ack() {
 	// shouldn't block, since the channel has size 1
 	m.ack <- ResponseOk
@@ -90,6 +86,9 @@ func (m *ChatMessage) Ack() {
 func (m *ChatMessage) WaitForAck() Response {
 	return <-m.ack
 }
+
+func copyHashMap(m map[User]chan<- ChatMessage) map[User]chan<- ChatMessage {
+	res := make(map[User]chan<- ChatMessage)
 	for a, b := range m {
 		res[a] = b
 	}
@@ -104,17 +103,17 @@ func broadcastMessageWait(contents string, sender *User) Response {
 	return sendMessageToAllUsersWait(contents, sender, cp)
 }
 
-func sendMessageToAllUsersWait(contents string, sender *User, users map[User]*ClientController) Response {
+func sendMessageToAllUsersWait(contents string, sender *User, users map[User]chan<- ChatMessage) Response {
 	totalToSendTo := len(users) - 1
 	succeeded := 0
-	for client, clientController := range users {
+	for client, sendMessage := range users {
 		if client == *sender {
 			continue
 		}
 
 		msg := NewChatMessage(sender, contents)
 		select {
-		case clientController.writeMessageToClient <- msg:
+		case sendMessage <- msg:
 			msg.WaitForAck()
 			succeeded++
 		case <-time.After(time.Millisecond * 200):
