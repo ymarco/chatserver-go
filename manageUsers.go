@@ -69,22 +69,22 @@ func logout(user *User) {
 }
 
 type ChatMessage struct {
-	ack     chan Response
+	ack     chan struct{}
 	sender  *User
 	content string
 }
 
 func NewChatMessage(user *User, content string) ChatMessage {
-	return ChatMessage{make(chan Response, 1), user, content}
+	return ChatMessage{make(chan struct{}, 1), user, content}
 }
 
 func (m *ChatMessage) Ack() {
 	// shouldn't block, since the channel has size 1
-	m.ack <- ResponseOk
+	m.ack <- struct{}{}
 }
 
-func (m *ChatMessage) WaitForAck() Response {
-	return <-m.ack
+func (m *ChatMessage) WaitForAck() {
+	<-m.ack
 }
 
 func copyHashMap(m map[User]chan<- ChatMessage) map[User]chan<- ChatMessage {
