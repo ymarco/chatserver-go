@@ -69,13 +69,27 @@ func acceptAuth(clientConn net.Conn) (*User, AuthAction, error) {
 func handleClient(clientConn net.Conn) {
 	defer closePrintErr(clientConn)
 	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
+	client, controller, err := tryToAcceptAuthRetry(clientConn)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer logout(client)
+	if err := sendResponse(ResponseOk, clientConn); err != nil {
+		log.Printf("Error with %s: %s\n", client.name, err)
+	}
+
+	handleMessagesLoop(clientConn, client, controller)
+}
+
+func tryToAcceptAuthRetry(clientConn net.Conn) (*User, *ClientController, error) {
 retry:
 	client, action, err := acceptAuth(clientConn)
 	if err == ErrClientHasQuit {
-		return
+		return nil, nil, err
 	} else if err != nil {
 		log.Printf("Error: %s", err)
-		return
+		return nil, nil, err
 	}
 
 	controller := NewClientController()
@@ -83,16 +97,11 @@ retry:
 	if response != ResponseOk {
 		if err := sendResponse(response, clientConn); err != nil {
 			log.Printf("Error with %s: %s\n", client.name, err)
-			return
+			return nil, nil, err
 		}
 		goto retry
 	}
-	defer logout(client)
-	if err := sendResponse(ResponseOk, clientConn); err != nil {
-		log.Printf("Error with %s: %s\n", client.name, err)
-	}
-
-	mainHandleClientLoop(clientConn, client, controller)
+	return client, controller, nil
 }
 
 func sendResponse(r Response, clientConn net.Conn) error {
@@ -100,7 +109,7 @@ func sendResponse(r Response, clientConn net.Conn) error {
 	return err
 }
 
-func mainHandleClientLoop(clientConn net.Conn, client *User, controller ClientController) {
+func handleMessagesLoop(clientConn net.Conn, client *User, controller *ClientController) {
 	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
 
 	for {
@@ -179,15 +188,4 @@ func readAsyncIntoChan(scanner *bufio.Scanner) <-chan ReadOutput {
 		}
 	}()
 	return outputs
-}
-
-func writeAsyncFromChan(writer io.Writer) (inputs chan string) {
-	inputs = make(chan string)
-	bufWriter := bufio.NewWriter(writer)
-	go func() {
-		for s := range inputs {
-			bufWriter.WriteString(s)
-		}
-	}()
-	return inputs
 }

@@ -6,19 +6,13 @@ import (
 	"time"
 )
 
-const (
-	Offline OnlineStatus = iota
-	Online
-)
-
-type OnlineStatus int
 type ClientController struct {
 	writeMessageToClient chan ChatMessage
 	quit                 chan struct{}
 }
 
-func NewClientController() ClientController {
-	return ClientController{quit: make(chan struct{}),
+func NewClientController() *ClientController {
+	return &ClientController{quit: make(chan struct{}),
 		writeMessageToClient: make(chan ChatMessage)}
 }
 
@@ -35,11 +29,11 @@ const (
 	ResponseInvalidCredentials Response = "Wrong username or password"
 	ResponseMsgFailedForSome   Response = "Message failed to send to some users"
 	ResponseMsgFailedToAll     Response = "Message failed to send to any users"
-	// should be returned along with a normal error type
-	ResponseIoErrorOccured Response = "IO error, couldn't get a response"
+	// ResponseIoErrorOccurred should be returned along with a normal error type
+	ResponseIoErrorOccurred Response = "IO error, couldn't get a response"
 )
 
-var activeUsers = make(map[User]ClientController)
+var activeUsers = make(map[User]*ClientController)
 var activeUsersLock = sync.Mutex{}
 var userDB = make(map[string]string)
 var userDBLock = sync.Mutex{}
@@ -53,7 +47,7 @@ func (m *ChatMessage) WaitForAck() Response {
 	return <-m.ack
 }
 
-func tryToAuthenticate(action AuthAction, user *User, controller ClientController) Response {
+func tryToAuthenticate(action AuthAction, user *User, controller *ClientController) Response {
 	activeUsersLock.Lock()
 	defer activeUsersLock.Unlock()
 
@@ -96,30 +90,23 @@ func NewChatMessage(user *User, content string) ChatMessage {
 	return ChatMessage{make(chan Response, 1), user, content}
 }
 
-func copy(m map[User]ClientController) map[User]ClientController {
-	new := make(map[User]ClientController)
+func copyHashMap(m map[User]*ClientController) map[User]*ClientController {
+	res := make(map[User]*ClientController)
 	for a, b := range m {
-		new[a] = b
+		res[a] = b
 	}
-	return new
-}
-func tryQuitting(controller ClientController, user User) {
-	select {
-	case controller.quit <- struct{}{}:
-	case <-time.After(time.Millisecond * 100):
-		log.Printf("Failed to send quit user %s\n", user.name)
-	}
+	return res
 }
 
 func broadcastMessageWait(contents string, sender *User) Response {
 	activeUsersLock.Lock()
-	cp := copy(activeUsers)
+	cp := copyHashMap(activeUsers)
 	activeUsersLock.Unlock()
 
 	return sendMessageToAllUsersWait(contents, sender, cp)
 }
 
-func sendMessageToAllUsersWait(contents string, sender *User, users map[User]ClientController) Response {
+func sendMessageToAllUsersWait(contents string, sender *User, users map[User]*ClientController) Response {
 	totalToSendTo := len(users) - 1
 	succeeded := 0
 	for user, controller := range users {

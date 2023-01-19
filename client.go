@@ -139,7 +139,7 @@ func promptForAuthTypeAndUser(userInput *bufio.Scanner, out io.Writer) (*User, A
 	return me, action, nil
 }
 
-var ErrInvalidAuth = errors.New("Username exists and such")
+var ErrInvalidAuth = errors.New("username exists and such")
 
 func AuthToServer(out io.Writer, user *User, action AuthAction,
 	serverConn io.ReadWriter) error {
@@ -148,7 +148,7 @@ func AuthToServer(out io.Writer, user *User, action AuthAction,
 		return err
 	}
 	if response != ResponseOk {
-		fmt.Println(response)
+		fmt.Fprintln(out, response)
 		return ErrInvalidAuth
 	}
 	return nil
@@ -197,9 +197,6 @@ func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (*Use
 	return &User{username, password}, nil
 }
 
-var ErrUsernameExists = errors.New("username already exists")
-var ErrUserOnline = errors.New("username already online")
-var ErrInvalidCredentials = errors.New("username already online")
 var ErrOddOutput = errors.New("weird output from server")
 
 func authenticate(action AuthAction, user *User, serverConn io.ReadWriter) (error, Response) {
@@ -216,14 +213,14 @@ func authenticate(action AuthAction, user *User, serverConn io.ReadWriter) (erro
 			user.name + "\n" +
 			user.password + "\n"))
 	if err != nil {
-		return err, ResponseIoErrorOccured
+		return err, ResponseIoErrorOccurred
 	}
 
 	serverOutput := bufio.NewScanner(serverConn)
 	status, err := scanLine(serverOutput)
 
 	if err != nil {
-		return err, ResponseIoErrorOccured
+		return err, ResponseIoErrorOccurred
 	}
 
 	switch Response(status) {
