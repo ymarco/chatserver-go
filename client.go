@@ -94,27 +94,33 @@ func handleClientMessagesLoop(userInput_ *bufio.Scanner, out io.Writer, serverCo
 			if line.err != nil {
 				return line.err
 			}
-			if err := sendMessage(line.val, serverConn); err != nil {
+			if err := sendMsgWithTimeout(line.val, serverConn); err != nil {
 				return err
 			}
-			if err := expectOk(serverOutput); err != nil {
+			if err := expectOkWithTimeout(serverOutput); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func sendMessage(msg string, serverConn net.Conn) error {
-	_, err := serverConn.Write([]byte(msg + "\n"))
-	if err != nil {
+func sendMsgWithTimeout(msg string, serverConn net.Conn) error {
+	finished := make(chan error)
+	go func() {
+		_, err := serverConn.Write([]byte(msg + "\n"))
+		finished <- err
+	}()
+	select {
+	case err := <-finished:
 		return err
+	case <-time.After(100 * time.Millisecond):
+		return ErrServerTimedOut
 	}
-	return nil
 }
 
 var ErrServerTimedOut = errors.New("server timed out")
 
-func expectOk(serverOutput <-chan ReadOutput) error {
+func expectOkWithTimeout(serverOutput <-chan ReadOutput) error {
 	select {
 	case ack := <-serverOutput:
 		if ack.err != nil {
