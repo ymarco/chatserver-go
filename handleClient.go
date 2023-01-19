@@ -83,25 +83,26 @@ func handleClient(clientConn net.Conn) {
 }
 
 func tryToAcceptAuthRetry(clientConn net.Conn) (*User, *ClientController, error) {
-retry:
-	client, action, err := acceptAuth(clientConn)
-	if err == ErrClientHasQuit {
-		return nil, nil, err
-	} else if err != nil {
-		log.Printf("Error: %s", err)
-		return nil, nil, err
-	}
-
-	controller := NewClientController()
-	response := tryToAuthenticate(action, client, controller)
-	if response != ResponseOk {
-		if err := sendResponse(response, clientConn); err != nil {
-			log.Printf("Error with %s: %s\n", client.name, err)
+	for {
+		client, action, err := acceptAuth(clientConn)
+		if err == ErrClientHasQuit {
+			return nil, nil, err
+		} else if err != nil {
+			log.Printf("Error: %s", err)
 			return nil, nil, err
 		}
-		goto retry
+
+		controller := NewClientController()
+		response := tryToAuthenticate(action, client, controller)
+		if response != ResponseOk {
+			if err := sendResponse(response, clientConn); err != nil {
+				log.Printf("Error with %s: %s\n", client.name, err)
+				return nil, nil, err
+			}
+			continue
+		}
+		return client, controller, nil
 	}
-	return client, controller, nil
 }
 
 func sendResponse(r Response, clientConn net.Conn) error {

@@ -14,32 +14,33 @@ import (
 
 func client(port string, in io.Reader, out io.Writer) {
 	log.SetOutput(out)
-reconnect:
-	serverConn, err := connectToPortWithRetry(port, out)
-	defer closePrintErr(serverConn)
-	log.Printf("Connected to %s\n", serverConn.RemoteAddr())
-	userInput := bufio.NewScanner(in)
-	me, err := authenticateWithRetry(userInput, out, serverConn)
-	if err == io.EOF {
-		fmt.Fprintln(out, "Server closed, retrying")
-		goto reconnect
-	} else if err != nil {
-		log.Fatalln(err)
-	}
-	fmt.Fprintf(out, "Logged in as %s\n\n", me.name)
-	err = handleClientMessagesLoop(me, userInput, out, serverConn)
-	switch err {
-	case nil:
-		panic("unreachable, mainClientLoop should return only on error")
-	case ErrServerQuit:
-		log.Println("Logged out, reconnecting")
-		goto reconnect
-	case io.EOF, ErrServerTimedOut, net.ErrClosed:
-		log.Println(out, "Server closed, retrying in 5 seconds")
-		time.Sleep(5 * time.Second)
-		goto reconnect
-	default:
-		fmt.Fprintln(out, err)
+	for {
+		serverConn, err := connectToPortWithRetry(port, out)
+		defer closePrintErr(serverConn)
+		log.Printf("Connected to %s\n", serverConn.RemoteAddr())
+		userInput := bufio.NewScanner(in)
+		me, err := authenticateWithRetry(userInput, out, serverConn)
+		if err == io.EOF {
+			fmt.Fprintln(out, "Server closed, retrying")
+			continue
+		} else if err != nil {
+			log.Fatalln(err)
+		}
+		fmt.Fprintf(out, "Logged in as %s\n\n", me.name)
+		err = handleClientMessagesLoop(userInput, out, serverConn)
+		switch err {
+		case nil:
+			panic("unreachable, mainClientLoop should return only on error")
+		case ErrServerQuit:
+			log.Println("Logged out and disconnected. Reconnecting...")
+			continue
+		case io.EOF, ErrServerTimedOut, net.ErrClosed:
+			log.Println(out, "Server closed, retrying in 5 seconds")
+			time.Sleep(5 * time.Second)
+			continue
+		default:
+			log.Fatalln(out, err)
+		}
 	}
 }
 func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn net.Conn) (*User, error) {
@@ -57,25 +58,25 @@ func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn n
 
 }
 func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
-reconnect2:
-	serverConn, err := net.Dial("tcp4", port)
-	if oerr, ok := err.(*net.OpError); ok {
-		if serr, ok := oerr.Err.(*os.SyscallError); ok && serr.Err == syscall.ECONNREFUSED {
-			log.SetOutput(out)
-			log.Println("Connection refused, retrying in 5 seconds")
-			time.Sleep(5 * time.Second)
-			goto reconnect2
+	for {
+		serverConn, err := net.Dial("tcp4", port)
+		if oerr, ok := err.(*net.OpError); ok {
+			if serr, ok := oerr.Err.(*os.SyscallError); ok && serr.Err == syscall.ECONNREFUSED {
+				log.SetOutput(out)
+				log.Println("Connection refused, retrying in 5 seconds")
+				time.Sleep(5 * time.Second)
+				continue
+			}
+		} else if err != nil {
+			log.Fatalln(err)
 		}
+		return serverConn, err
 	}
-	if err != nil {
-		log.Fatalln(err)
-	}
-	return serverConn, err
 }
 
 var ErrServerQuit = errors.New("server logged us out")
 
-func handleClientMessagesLoop(me *User, userInput_ *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
+func handleClientMessagesLoop(userInput_ *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
 	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
 	userInput := readAsyncIntoChan(userInput_)
 	for {
