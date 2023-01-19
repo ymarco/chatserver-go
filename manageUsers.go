@@ -114,8 +114,12 @@ func sendMessageToAllUsersWait(contents string, sender *User, users map[User]cha
 		msg := NewChatMessage(sender, contents)
 		select {
 		case sendMessage <- msg:
-			msg.WaitForAck()
-			succeeded++
+			select {
+			case <-msg.ack:
+				succeeded++
+			case <-time.After(time.Millisecond * 200):
+				log.Printf("Failed to send msg to user %s\n", client.name)
+			}
 		case <-time.After(time.Millisecond * 200):
 			log.Printf("Failed to send msg to user %s\n", client.name)
 		}
