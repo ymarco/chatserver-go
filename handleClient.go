@@ -150,12 +150,12 @@ func dispatchClientInput(input string, client *User, clientConn net.Conn) error 
 
 const LogoutCmd = "$logout$"
 
-func runUserCommand(s string, client *User, clientConn net.Conn) error {
+func runUserCommand(cmd string, client *User, clientConn net.Conn) error {
 	err := sendResponse(ResponseOk, clientConn)
 	if err != nil {
 		return err
 	}
-	switch s {
+	switch cmd {
 	case "quit":
 		logout(client)
 		return passCommandToRunToClient(clientConn, LogoutCmd)

@@ -57,18 +57,24 @@ func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn n
 	}
 
 }
+func errIsConnectionRefused(err error) bool {
+	if oerr, ok := err.(*net.OpError); ok {
+		if serr, ok := oerr.Err.(*os.SyscallError); ok && serr.Err == syscall.ECONNREFUSED {
+			return true
+		}
+	}
+	return false
+}
 func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 	for {
 		serverConn, err := net.Dial("tcp4", port)
-		if oerr, ok := err.(*net.OpError); ok {
-			if serr, ok := oerr.Err.(*os.SyscallError); ok && serr.Err == syscall.ECONNREFUSED {
-				log.SetOutput(out)
-				log.Println("Connection refused, retrying in 5 seconds")
-				time.Sleep(5 * time.Second)
-				continue
-			}
+		if errIsConnectionRefused(err) {
+			log.SetOutput(out)
+			log.Println("Connection refused, retrying in 5 seconds")
+			time.Sleep(5 * time.Second)
+			continue
 		} else if err != nil {
-			log.Fatalln(err)
+			return nil, err
 		}
 		return serverConn, err
 	}
@@ -110,6 +116,7 @@ func sendMsgWithTimeout(msg string, serverConn net.Conn) error {
 		_, err := serverConn.Write([]byte(msg + "\n"))
 		finished <- err
 	}()
+
 	select {
 	case err := <-finished:
 		return err
