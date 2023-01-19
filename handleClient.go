@@ -24,7 +24,7 @@ func strToAuthAction(s string) (AuthAction, error) {
 		return ActionRegister, nil
 	case "l":
 		return ActionLogin, nil
-	case "": // happens when a user quits without choosing
+	case "": // happens when the client quits without choosing
 		return ActionRegister, ErrClientHasQuit
 	default:
 		return ActionRegister, fmt.Errorf("weird output from clientConn: %s", s)
@@ -70,7 +70,9 @@ func handleClient(clientConn net.Conn) {
 	defer closePrintErr(clientConn)
 	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
 	client, controller, err := tryToAcceptAuthRetry(clientConn)
-	if err != nil {
+	if err == ErrClientHasQuit {
+		return
+	} else if err != nil {
 		log.Println(err)
 		return
 	}
@@ -85,23 +87,22 @@ func handleClient(clientConn net.Conn) {
 func tryToAcceptAuthRetry(clientConn net.Conn) (*User, *ClientController, error) {
 	for {
 		client, action, err := acceptAuth(clientConn)
-		if err == ErrClientHasQuit {
-			return nil, nil, err
-		} else if err != nil {
-			log.Printf("Error: %s", err)
+		if err != nil {
 			return nil, nil, err
 		}
-
 		controller := NewClientController()
 		response := tryToAuthenticate(action, client, controller)
-		if response != ResponseOk {
-			if err := sendResponse(response, clientConn); err != nil {
+		if response == ResponseOk {
+			return client, controller, nil
+		} else {
+			// try to communicate that we're retrying
+			err := sendResponse(response, clientConn)
+			if err != nil {
 				log.Printf("Error with %s: %s\n", client.name, err)
 				return nil, nil, err
 			}
 			continue
 		}
-		return client, controller, nil
 	}
 }
 
@@ -110,7 +111,7 @@ func sendResponse(r Response, clientConn net.Conn) error {
 	return err
 }
 
-func handleMessagesLoop(clientConn net.Conn, client *User, controller *ClientController) {
+func handleMessagesLoop(clientConn net.Conn, client *User, clientController *ClientController) {
 	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
 
 	for {
@@ -127,10 +128,10 @@ func handleMessagesLoop(clientConn net.Conn, client *User, controller *ClientCon
 				log.Println(input.err)
 				return
 			}
-		case <-controller.quit:
+		case <-clientController.quit:
 			fmt.Println("quit")
 			return
-		case msg := <-controller.writeMessageToClient:
+		case msg := <-clientController.writeMessageToClient:
 			err := passMessageToClient(clientConn, msg)
 			msg.Ack()
 			if err != nil {
@@ -145,7 +146,8 @@ func dispatchClientInput(input string, client *User, clientConn net.Conn) error 
 	if strings.HasPrefix(input, "/") {
 		return runUserCommand(input[1:], client, clientConn)
 	} else {
-		return sendResponse(broadcastMessageWait(input, client), clientConn)
+		response := broadcastMessageWait(input, client)
+		return sendResponse(response, clientConn)
 	}
 }
 

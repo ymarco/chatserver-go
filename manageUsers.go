@@ -108,18 +108,18 @@ func broadcastMessageWait(contents string, sender *User) Response {
 func sendMessageToAllUsersWait(contents string, sender *User, users map[User]*ClientController) Response {
 	totalToSendTo := len(users) - 1
 	succeeded := 0
-	for user, controller := range users {
-		if user == *sender {
+	for client, clientController := range users {
+		if client == *sender {
 			continue
 		}
 
 		msg := NewChatMessage(sender, contents)
 		select {
-		case controller.writeMessageToClient <- msg: //TODO
+		case clientController.writeMessageToClient <- msg:
 			msg.WaitForAck()
 			succeeded++
 		case <-time.After(time.Millisecond * 200):
-			log.Printf("Failed to send msg to user %s\n", user.name)
+			log.Printf("Failed to send msg to user %s\n", client.name)
 		}
 	}
 	if succeeded == 0 && totalToSendTo != 0 {

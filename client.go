@@ -50,7 +50,7 @@ func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn n
 			return nil, err
 		}
 
-		err = AuthToServer(out, me, action, serverConn)
+		err = authenticateWithServer(out, me, action, serverConn)
 		if err != ErrInvalidAuth {
 			return me, err
 		}
@@ -142,9 +142,9 @@ func promptForAuthTypeAndUser(userInput *bufio.Scanner, out io.Writer) (*User, A
 
 var ErrInvalidAuth = errors.New("username exists and such")
 
-func AuthToServer(out io.Writer, user *User, action AuthAction,
+func authenticateWithServer(out io.Writer, client *User, action AuthAction,
 	serverConn io.ReadWriter) error {
-	err, response := authenticate(action, user, serverConn)
+	err, response := authenticate(action, client, serverConn)
 	if err != nil {
 		return err
 	}
