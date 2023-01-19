@@ -31,7 +31,7 @@ func client(port string, in io.Reader, out io.Writer) {
 		switch err {
 		case nil:
 			panic("unreachable, mainClientLoop should return only on error")
-		case ErrServerQuit:
+		case ErrServerLoggedUsOut:
 			log.Println("Logged out and disconnected. Reconnecting...")
 			continue
 		case io.EOF, ErrServerTimedOut, net.ErrClosed:
@@ -74,7 +74,7 @@ func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 	}
 }
 
-var ErrServerQuit = errors.New("server logged us out")
+var ErrServerLoggedUsOut = errors.New("server logged us out")
 
 func handleClientMessagesLoop(userInput_ *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
 	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
@@ -86,7 +86,7 @@ func handleClientMessagesLoop(userInput_ *bufio.Scanner, out io.Writer, serverCo
 				return msg.err
 			}
 			if msg.val == LogoutCmd {
-				return ErrServerQuit
+				return ErrServerLoggedUsOut
 			} else {
 				fmt.Fprintln(out, msg.val)
 			}
