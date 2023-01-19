@@ -32,6 +32,7 @@ func strToAuthAction(s string) (AuthAction, error) {
 }
 
 func scanLine(s *bufio.Scanner) (string, error) {
+	// a wrapper around Scanner.Scan() to return EOF as errors instead of bools
 	if !s.Scan() {
 		if s.Err() == nil {
 			return "", io.EOF
@@ -42,7 +43,7 @@ func scanLine(s *bufio.Scanner) (string, error) {
 	return s.Text(), nil
 }
 
-func acceptAuth(clientConn net.Conn) (*User, AuthAction, error) {
+func acceptAuthRequest(clientConn net.Conn) (*User, AuthAction, error) {
 	clientOutput := bufio.NewScanner(clientConn)
 	choice, err := scanLine(clientOutput)
 	if err != nil {
@@ -86,7 +87,7 @@ func handleClient(clientConn net.Conn) {
 
 func tryToAcceptAuthRetry(clientConn net.Conn) (*User, <-chan ChatMessage, error) {
 	for {
-		client, action, err := acceptAuth(clientConn)
+		client, action, err := acceptAuthRequest(clientConn)
 		if err != nil {
 			return nil, nil, err
 		}
