@@ -38,10 +38,10 @@ func closePrintErr(c Closer) {
 
 func server(port string) {
 	l, err := net.Listen("tcp4", port)
-	log.Printf("Listening at %s\n", l.Addr())
 	if err != nil {
 		log.Fatalln(err)
 	}
+	log.Printf("Listening at %s\n", l.Addr())
 	defer closePrintErr(l)
 
 	for {
