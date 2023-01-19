@@ -34,9 +34,10 @@ const (
 )
 
 var activeUsers = make(map[User]*ClientController)
-var activeUsersLock = sync.Mutex{}
+var activeUsersLock = sync.RWMutex{}
+
 var userDB = make(map[string]string)
-var userDBLock = sync.Mutex{}
+var userDBLock = sync.RWMutex{}
 
 func (m *ChatMessage) Ack() {
 	// shouldn't block, since the channel has size 1
@@ -99,9 +100,9 @@ func copyHashMap(m map[User]*ClientController) map[User]*ClientController {
 }
 
 func broadcastMessageWait(contents string, sender *User) Response {
-	activeUsersLock.Lock()
+	activeUsersLock.RLock()
 	cp := copyHashMap(activeUsers)
-	activeUsersLock.Unlock()
+	activeUsersLock.RUnlock()
 
 	return sendMessageToAllUsersWait(contents, sender, cp)
 }
