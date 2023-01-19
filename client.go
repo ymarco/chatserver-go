@@ -13,35 +13,47 @@ import (
 )
 
 func client(port string, in io.Reader, out io.Writer) {
-	log.SetOutput(out)
 	for {
-		serverConn, err := connectToPortWithRetry(port, out)
-		defer closePrintErr(serverConn)
-		log.Printf("Connected to %s\n", serverConn.RemoteAddr())
-		userInput := bufio.NewScanner(in)
-		me, err := authenticateWithRetry(userInput, out, serverConn)
-		if err == io.EOF {
-			fmt.Fprintln(out, "Server closed, retrying")
-			continue
-		} else if err != nil {
-			log.Fatalln(err)
-		}
-		fmt.Fprintf(out, "Logged in as %s\n\n", me.name)
-		err = handleClientMessagesLoop(userInput, out, serverConn)
-		switch err {
-		case nil:
-			panic("unreachable, mainClientLoop should return only on error")
-		case ErrServerLoggedUsOut:
-			log.Println("Logged out and disconnected. Reconnecting...")
-			continue
-		case io.EOF, ErrServerTimedOut, net.ErrClosed:
-			log.Println(out, "Server closed, retrying in 5 seconds")
-			time.Sleep(5 * time.Second)
-			continue
-		default:
-			log.Fatalln(out, err)
+		shouldRetry := runClientUntilDisconnected(port, in, out)
+		if !shouldRetry {
+			break
 		}
 	}
+}
+func runClientUntilDisconnected(port string, in io.Reader, out io.Writer) (shouldRetry bool) {
+	log.SetOutput(out)
+	serverConn, err := connectToPortWithRetry(port, out)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer closePrintErr(serverConn)
+	log.Printf("Connected to %s\n", serverConn.RemoteAddr())
+
+	userInput := bufio.NewScanner(in)
+	me, err := authenticateWithRetry(userInput, out, serverConn)
+	if err == io.EOF {
+		fmt.Fprintln(out, "Server closed, retrying")
+		return true
+	} else if err != nil {
+		log.Fatalln(err)
+	}
+	fmt.Fprintf(out, "Logged in as %s\n\n", me.name)
+
+	err = handleClientMessagesLoop(userInput, out, serverConn)
+	switch err {
+	case nil:
+		panic("unreachable, mainClientLoop should return only on error")
+	case ErrServerLoggedUsOut:
+		log.Println("Logged out and disconnected. Reconnecting...")
+		return true
+	case io.EOF, ErrServerTimedOut, net.ErrClosed:
+		log.Println(out, "Server closed, retrying in 5 seconds")
+		time.Sleep(5 * time.Second)
+		return true
+	default:
+		log.Fatalln(out, err)
+	}
+	return false // unreachable
 }
 func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn net.Conn) (*User, error) {
 	for {
