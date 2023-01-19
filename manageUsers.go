@@ -37,15 +37,6 @@ var activeUsersLock = sync.RWMutex{}
 var userDB = make(map[string]string)
 var userDBLock = sync.RWMutex{}
 
-func (m *ChatMessage) Ack() {
-	// shouldn't block, since the channel has size 1
-	m.ack <- ResponseOk
-}
-
-func (m *ChatMessage) WaitForAck() Response {
-	return <-m.ack
-}
-
 func tryToAuthenticate(action AuthAction, user *User, controller *ClientController) Response {
 	activeUsersLock.Lock()
 	defer activeUsersLock.Unlock()
@@ -91,6 +82,14 @@ func NewChatMessage(user *User, content string) ChatMessage {
 
 func copyHashMap(m map[User]*ClientController) map[User]*ClientController {
 	res := make(map[User]*ClientController)
+func (m *ChatMessage) Ack() {
+	// shouldn't block, since the channel has size 1
+	m.ack <- ResponseOk
+}
+
+func (m *ChatMessage) WaitForAck() Response {
+	return <-m.ack
+}
 	for a, b := range m {
 		res[a] = b
 	}
