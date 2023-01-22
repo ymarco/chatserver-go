@@ -20,6 +20,7 @@ func client(port string, in io.Reader, out io.Writer) {
 		}
 	}
 }
+
 func runClientUntilDisconnected(port string, in io.Reader, out io.Writer) (shouldRetry bool) {
 	log.SetOutput(out)
 	serverConn, err := connectToPortWithRetry(port, out)
@@ -53,8 +54,10 @@ func runClientUntilDisconnected(port string, in io.Reader, out io.Writer) (shoul
 	default:
 		log.Fatalln(out, err)
 	}
+
 	return false // unreachable
 }
+
 func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn net.Conn) (*User, error) {
 	for {
 		me, action, err := promptForAuthTypeAndUser(userInput, out)
@@ -80,15 +83,19 @@ func errIsConnectionRefused(err error) bool {
 func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 	for {
 		serverConn, err := net.Dial("tcp4", port)
-		if errIsConnectionRefused(err) {
-			log.SetOutput(out)
-			log.Println("Connection refused, retrying in 5 seconds")
-			time.Sleep(5 * time.Second)
-			continue
-		} else if err != nil {
+
+		if err != nil {
+			if errIsConnectionRefused(err) {
+				log.SetOutput(out)
+				log.Println("Connection refused, retrying in 5 seconds")
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
 			return nil, err
 		}
-		return serverConn, err
+
+		return serverConn, nil
 	}
 }
 
@@ -145,14 +152,13 @@ func expectOkWithTimeout(serverOutput <-chan ReadOutput) error {
 		if ack.err != nil {
 			return ack.err
 		}
-		if ack.val != "Ok" {
+		if Response(ack.val) != ResponseOk {
 			return fmt.Errorf("Message sending error: %s\n", ack.val)
 		}
 		return nil
 	case <-time.After(5 * time.Second):
 		return ErrServerTimedOut
 	}
-
 }
 
 func promptForAuthTypeAndUser(userInput *bufio.Scanner, out io.Writer) (*User, AuthAction, error) {

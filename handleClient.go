@@ -95,14 +95,13 @@ func tryToAcceptAuthRetry(clientConn net.Conn) (*User, <-chan ChatMessage, error
 		response := tryToAuthenticate(action, client, send)
 		if response == ResponseOk {
 			return client, receive, nil
-		} else {
-			// try to communicate that we're retrying
-			err := sendResponse(response, clientConn)
-			if err != nil {
-				log.Printf("Error with %s: %s\n", client.name, err)
-				return nil, nil, err
-			}
-			continue
+		}
+
+		// try to communicate that we're retrying
+		err = sendResponse(response, clientConn)
+		if err != nil {
+			log.Printf("Error with %s: %s\n", client.name, err)
+			return nil, nil, err
 		}
 	}
 }

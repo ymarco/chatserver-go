@@ -45,7 +45,7 @@ func tryToAuthenticate(action AuthAction, user *User,
 	switch action {
 	case ActionLogin:
 		pass, exists := userDB[user.name]
-		if (!exists) || pass != user.password {
+		if !exists || pass != user.password {
 			return ResponseInvalidCredentials
 		} else if _, isActive := activeUsers[*user]; isActive {
 			return ResponseUserAlreadyOnline
@@ -53,7 +53,6 @@ func tryToAuthenticate(action AuthAction, user *User,
 	case ActionRegister:
 		if _, exists := userDB[user.name]; exists {
 			return ResponseUsernameExists
-
 		}
 	}
 	userDB[user.name] = user.password
@@ -112,6 +111,7 @@ func sendMessageToAllUsersWait(contents string, sender *User, users map[User]cha
 		}
 
 		msg := NewChatMessage(sender, contents)
+
 		select {
 		case sendMessage <- msg:
 			select {
@@ -124,6 +124,7 @@ func sendMessageToAllUsersWait(contents string, sender *User, users map[User]cha
 			log.Printf("Failed to send msg to user %s\n", client.name)
 		}
 	}
+
 	if succeeded == 0 && totalToSendTo != 0 {
 		return ResponseMsgFailedToAll
 	} else if succeeded != totalToSendTo {
