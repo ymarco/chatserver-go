@@ -46,7 +46,7 @@ func runClientUntilDisconnected(port string, in io.Reader, out io.Writer) (shoul
 		log.Println("Logged out and disconnected. Reconnecting...")
 		return true
 	case io.EOF, ErrServerTimedOut, net.ErrClosed:
-		log.Println(out, "Server closed, retrying in 5 seconds")
+		log.Println("Server closed, retrying in 5 seconds")
 		time.Sleep(5 * time.Second)
 		return true
 	default:
