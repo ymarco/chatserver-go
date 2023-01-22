@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -112,38 +113,53 @@ func (hub *Hub) broadcastMessageWait(content string, sender *UserCredentials) Re
 
 func sendMessageToAllClientsWait(contents string, sender *UserCredentials, users map[UserCredentials]*Client) Response {
 	totalToSendTo := len(users) - 1
-	succeeded := 0
+	if totalToSendTo == 0 {
+		return ResponseOk
+	}
 
-	go func() {
-		// for
-		// go Send message to user
-	}()
-
+	sendingErrors := make(chan error, totalToSendTo)
 	for _, client := range users {
 		if *client.creds == *sender {
 			continue
 		}
-
-		msg := NewChatMessage(sender, contents)
-
-		select {
-		case client.sendMsg <- msg:
-			select {
-			case <-msg.ack:
-				succeeded++
-			case <-time.After(time.Millisecond * 200):
-				log.Printf("Failed to send msg to user %s\n", client.creds.name)
-			}
-		case <-time.After(time.Millisecond * 200):
-			log.Printf("Failed to send msg to user %s\n", client.creds.name)
-		}
+		go func(client *Client) {
+			sendingErrors <- sendMessageToClientWithTimeout(client, contents, sender)
+		}(client)
 	}
 
-	if succeeded == 0 && totalToSendTo != 0 {
+	succeeded := 0
+	for err := range sendingErrors {
+		if err == nil {
+			succeeded++
+		}
+	}
+	if succeeded == 0 {
 		return ResponseMsgFailedToAll
-	} else if succeeded != totalToSendTo {
+	} else if succeeded < totalToSendTo {
 		return ResponseMsgFailedForSome
 	} else {
 		return ResponseOk
+	}
+}
+
+var ErrSendingTimedOut = errors.New("couldn't forward message to client: timed out")
+
+const MsgSendTimeout = time.Millisecond * 200
+
+// REVIEW currently messages that the client times out on are lost
+func sendMessageToClientWithTimeout(client *Client, msgContent string,
+	sender *UserCredentials) error {
+	msg := NewChatMessage(sender, msgContent)
+
+	select {
+	case client.sendMsg <- msg:
+		select {
+		case <-msg.ack:
+			return nil
+		case <-time.After(MsgSendTimeout):
+			return ErrSendingTimedOut
+		}
+	case <-time.After(MsgSendTimeout):
+		return ErrSendingTimedOut
 	}
 }
