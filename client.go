@@ -13,11 +13,9 @@ import (
 )
 
 func client(port string, in io.Reader, out io.Writer) {
-	for {
-		shouldRetry := runClientUntilDisconnected(port, in, out)
-		if !shouldRetry {
-			break
-		}
+	shouldRetry := true
+	for shouldRetry {
+		shouldRetry = runClientUntilDisconnected(port, in, out)
 	}
 }
 

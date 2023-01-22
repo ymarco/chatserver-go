@@ -139,8 +139,11 @@ func handleMessagesLoop(clientConn net.Conn, client *User, receiveMsg <-chan Cha
 	}
 }
 
+func isCommand(s string) bool {
+	return strings.HasPrefix(s, "/");
+}
 func dispatchClientInput(input string, client *User, clientConn net.Conn) error {
-	if strings.HasPrefix(input, "/") {
+	if isCommand(input) {
 		return runUserCommand(input[1:], client, clientConn)
 	} else {
 		response := broadcastMessageWait(input, client)

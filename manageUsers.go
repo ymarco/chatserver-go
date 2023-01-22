@@ -96,12 +96,12 @@ func copyHashMap(m map[User]chan<- ChatMessage) map[User]chan<- ChatMessage {
 	return res
 }
 
-func broadcastMessageWait(contents string, sender *User) Response {
+func broadcastMessageWait(content string, sender *User) Response {
 	activeUsersLock.RLock()
 	cp := copyHashMap(activeUsers)
 	activeUsersLock.RUnlock()
 
-	return sendMessageToAllUsersWait(contents, sender, cp)
+	return sendMessageToAllUsersWait(content, sender, cp)
 }
 
 func sendMessageToAllUsersWait(contents string, sender *User, users map[User]chan<- ChatMessage) Response {
