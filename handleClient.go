@@ -211,6 +211,9 @@ func readAsyncIntoChan(scanner *bufio.Scanner) <-chan ReadOutput {
 		for {
 			s, err := scanLine(scanner)
 			outputs <- ReadOutput{s, err}
+			if err != nil {
+				return
+			}
 		}
 	}()
 	return outputs
