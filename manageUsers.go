@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func NewMessageChannel() (send chan<- ChatMessage, receive <-chan ChatMessage) {
+func NewMessagePipe() (send chan<- ChatMessage, receive <-chan ChatMessage) {
 	res := make(chan ChatMessage)
 	return res, res
 }

@@ -90,7 +90,8 @@ func acceptAuthRetry(clientConn net.Conn) (*User, <-chan ChatMessage, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		send, receive := NewMessageChannel()
+
+		send, receive := NewMessagePipe()
 		response := tryToAuthenticate(action, client, send)
 		if response == ResponseOk {
 			return client, receive, nil
