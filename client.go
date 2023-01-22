@@ -128,18 +128,10 @@ func handleClientMessagesLoop(userInput_ *bufio.Scanner, out io.Writer, serverCo
 }
 
 func sendMsgWithTimeout(msg string, serverConn net.Conn) error {
-	finished := make(chan error)
-	go func() {
-		_, err := serverConn.Write([]byte(msg + "\n"))
-		finished <- err
-	}()
-
-	select {
-	case err := <-finished:
-		return err
-	case <-time.After(100 * time.Millisecond):
-		return ErrServerTimedOut
-	}
+	serverConn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+	_, err := serverConn.Write([]byte(msg + "\n"))
+	serverConn.SetWriteDeadline(time.Time{})
+	return err
 }
 
 var ErrServerTimedOut = errors.New("server timed out")
