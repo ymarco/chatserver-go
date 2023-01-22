@@ -87,10 +87,10 @@ func (client *Client) Close() error {
 	return client.conn.Close()
 }
 
-func handleClient(hub *Hub, clientConn net.Conn) {
-	client := NewEmptyClient(clientConn, hub)
+func handleNewConnection(hub *Hub, conn net.Conn) {
+	client := NewEmptyClient(conn, hub)
 	defer closePrintErr(client)
-	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
+	defer log.Printf("Disconnected: %s\n", conn.RemoteAddr())
 	err := client.acceptAuthRetry()
 	if err == ErrClientHasQuit {
 		return
@@ -117,12 +117,12 @@ func (client *Client) acceptAuthRetry() error {
 
 		response := client.hub.tryToAuthenticate(action, client)
 		if response == ResponseOk {
-			err := client.sendResponse(ResponseOk)
+			err := client.passResponseToUser(ResponseOk)
 			return err
 		}
 
 		// try to communicate that we're retrying
-		err = client.sendResponse(response)
+		err = client.passResponseToUser(response)
 		if err != nil {
 			log.Printf("Error with %s: %s\n", client.creds.name, err)
 			return err
@@ -130,7 +130,7 @@ func (client *Client) acceptAuthRetry() error {
 	}
 }
 
-func (client *Client) sendResponse(r Response) error {
+func (client *Client) passResponseToUser(r Response) error {
 	_, err := client.conn.Write([]byte(string(r) + "\n"))
 	return err
 }
@@ -166,7 +166,7 @@ func (client *Client) dispatchUserInput(input string) error {
 		return client.runUserCommand(input)
 	} else {
 		response := client.hub.broadcastMessageWait(input, client.creds)
-		return client.sendResponse(response)
+		return client.passResponseToUser(response)
 	}
 }
 
@@ -177,7 +177,7 @@ const (
 )
 
 func (client *Client) runUserCommand(cmd string) error {
-	err := client.sendResponse(ResponseOk)
+	err := client.passResponseToUser(ResponseOk)
 	if err != nil {
 		return err
 	}
