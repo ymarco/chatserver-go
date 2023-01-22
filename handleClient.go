@@ -87,15 +87,16 @@ func handleClient(hub *Hub, clientConn net.Conn) {
 	if err == ErrClientHasQuit {
 		return
 	} else if err != nil {
-		log.Println(err)
+		log.Printf("Err with %s: %s", client.creds.name, err)
 		return
 	}
 	defer hub.Logout(client.creds)
-	if err := client.sendResponse(ResponseOk); err != nil {
-		log.Printf("Error with %s: %s\n", client.creds.name, err)
+
+	err = client.handleMessagesLoop()
+	if err != ErrClientHasQuit {
+		log.Println(err)
 	}
 
-	client.handleMessagesLoop()
 }
 
 func (client *Client) acceptAuthRetry() error {
@@ -130,29 +131,24 @@ func (client *Client) sendResponse(r Response) error {
 	return err
 }
 
-func (client *Client) handleMessagesLoop() {
+func (client *Client) handleMessagesLoop() error {
 	userInput := readAsyncIntoChan(bufio.NewScanner(client.conn))
 
 	for {
 		select {
 		case input := <-userInput:
-			if input.err == ErrClientHasQuit {
-				return
-			} else if input.err != nil {
-				log.Println(input.err)
-				return
+			if input.err != nil {
+				return input.err
 			}
 			err := client.dispatchUserInput(input.val)
 			if err != nil {
-				log.Println(input.err)
-				return
+				return err
 			}
 		case msg := <-client.receiveMsg:
 			err := client.passMessageToUser(msg)
 			msg.Ack()
 			if err != nil {
-				log.Println(err)
-				return
+				return err
 			}
 		}
 	}
