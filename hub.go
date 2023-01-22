@@ -49,25 +49,34 @@ func (hub *Hub) tryToAuthenticate(action AuthAction, client *Client) Response {
 	hub.userDBLock.Lock()
 	defer hub.userDBLock.Unlock()
 
+	response := hub.clientIsValidToAuthenticate(action, client.creds)
+	if response == ResponseOk {
+		hub.logClientIn(client)
+		log.Printf("Logged in: %s\n", client.creds.name)
+	}
+	return response
+}
+func (hub *Hub) clientIsValidToAuthenticate(action AuthAction, creds *UserCredentials) Response {
 	switch action {
 	case ActionLogin:
-		pass, exists := hub.userDB[client.creds.name]
-		if !exists || pass != client.creds.password {
+		pass, exists := hub.userDB[creds.name]
+		if !exists || pass != creds.password {
 			return ResponseInvalidCredentials
-		} else if _, isActive := hub.activeUsers[*client.creds]; isActive {
+		} else if _, isActive := hub.activeUsers[*creds]; isActive {
 			return ResponseUserAlreadyOnline
 		}
 	case ActionRegister:
-		if _, exists := hub.userDB[client.creds.name]; exists {
+		if _, exists := hub.userDB[creds.name]; exists {
 			return ResponseUsernameExists
 		}
 	default:
 		panic("unreachable")
 	}
+	panic("unreachable")
+}
+func (hub *Hub) logClientIn(client *Client) {
 	hub.userDB[client.creds.name] = client.creds.password
 	hub.activeUsers[*client.creds] = client
-	log.Printf("Logged in: %s\n", client.creds.name)
-	return ResponseOk
 }
 func (hub *Hub) Logout(creds *UserCredentials) {
 	hub.userDBLock.Lock()

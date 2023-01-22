@@ -112,7 +112,8 @@ func (client *Client) acceptAuthRetry() error {
 
 		response := client.hub.tryToAuthenticate(action, client)
 		if response == ResponseOk {
-			return nil // success
+			err := client.sendResponse(ResponseOk)
+			return err
 		}
 
 		// try to communicate that we're retrying
