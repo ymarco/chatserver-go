@@ -41,7 +41,7 @@ func NewHub() *Hub {
 	}
 }
 
-func (hub *Hub) TryToAuthenticate(action AuthAction, client *Client) Response {
+func (hub *Hub) tryToAuthenticate(action AuthAction, client *Client) Response {
 	hub.activeUsersLock.Lock()
 	defer hub.activeUsersLock.Unlock()
 

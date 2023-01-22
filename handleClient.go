@@ -110,9 +110,9 @@ func (client *Client) acceptAuthRetry() error {
 		client.sendMsg = send
 		client.receiveMsg = receive
 
-		response := client.hub.TryToAuthenticate(action, client)
+		response := client.hub.tryToAuthenticate(action, client)
 		if response == ResponseOk {
-			return nil
+			return nil // success
 		}
 
 		// try to communicate that we're retrying
