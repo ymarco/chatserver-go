@@ -9,11 +9,24 @@ import (
 	"strings"
 )
 
+type UserCredentials struct {
+	name     string
+	password string
+}
+type Client struct {
+	receiveMsg <-chan ChatMessage
+	sendMsg    chan<- ChatMessage
+	creds      *UserCredentials
+	conn       net.Conn
+	hub        *Hub
+}
+
 type AuthAction string
+
 const (
-	ActionLogin AuthAction = "l"
+	ActionLogin    AuthAction = "l"
 	ActionRegister AuthAction = "r"
-	ActionIOErr AuthAction = ""
+	ActionIOErr    AuthAction = ""
 )
 
 var ErrClientHasQuit = io.EOF
@@ -66,70 +79,75 @@ func acceptAuthRequest(clientConn net.Conn) (*UserCredentials, AuthAction, error
 	return &UserCredentials{username, password}, action, nil
 }
 
-func handleClient(clientConn net.Conn) {
+func handleClient(hub *Hub, clientConn net.Conn) {
 	defer closePrintErr(clientConn)
 	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
-	client, receiveMsg, err := acceptAuthRetry(clientConn)
+	client := &Client{conn: clientConn, hub: hub}
+	err := client.acceptAuthRetry()
 	if err == ErrClientHasQuit {
 		return
 	} else if err != nil {
 		log.Println(err)
 		return
 	}
-	defer logout(client)
-	if err := sendResponse(ResponseOk, clientConn); err != nil {
-		log.Printf("Error with %s: %s\n", client.name, err)
+	defer hub.Logout(client.creds)
+	if err := client.sendResponse(ResponseOk); err != nil {
+		log.Printf("Error with %s: %s\n", client.creds.name, err)
 	}
 
-	handleMessagesLoop(clientConn, client, receiveMsg)
+	client.handleMessagesLoop()
 }
 
-func acceptAuthRetry(clientConn net.Conn) (*UserCredentials, <-chan ChatMessage, error) {
+func (client *Client) acceptAuthRetry() error {
 	for {
-		client, action, err := acceptAuthRequest(clientConn)
+		creds, action, err := acceptAuthRequest(client.conn)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
+		client.creds = creds
 
 		send, receive := NewMessagePipe()
-		response := tryToAuthenticate(action, client, send)
+		client.sendMsg = send
+		client.receiveMsg = receive
+
+		response := client.hub.TryToAuthenticate(action, client)
 		if response == ResponseOk {
-			return client, receive, nil
+			return nil
 		}
 
 		// try to communicate that we're retrying
-		err = sendResponse(response, clientConn)
+		err = client.sendResponse(response)
 		if err != nil {
-			log.Printf("Error with %s: %s\n", client.name, err)
-			return nil, nil, err
+			log.Printf("Error with %s: %s\n", client.creds.name, err)
+			return err
 		}
 	}
 }
 
-func sendResponse(r Response, clientConn net.Conn) error {
-	_, err := clientConn.Write([]byte(string(r) + "\n"))
+func (client *Client) sendResponse(r Response) error {
+	_, err := client.conn.Write([]byte(string(r) + "\n"))
 	return err
 }
 
-func handleMessagesLoop(clientConn net.Conn, client *UserCredentials, receiveMsg <-chan ChatMessage) {
-	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
+func (client *Client) handleMessagesLoop() {
+	userInput := readAsyncIntoChan(bufio.NewScanner(client.conn))
 
 	for {
 		select {
-		case input := <-clientInput:
+		case input := <-userInput:
 			if input.err == ErrClientHasQuit {
 				return
 			} else if input.err != nil {
 				log.Println(input.err)
 				return
 			}
-			err := dispatchClientInput(input.val, client, clientConn)
+			err := client.dispatchUserInput(input.val)
 			if err != nil {
 				log.Println(input.err)
 				return
 			}
-		case msg := <-receiveMsg:
-			err := passMessageToClient(clientConn, msg)
+		case msg := <-client.receiveMsg:
+			err := client.passMessageToUser(msg)
 			msg.Ack()
 			if err != nil {
 				log.Println(err)
@@ -140,40 +158,44 @@ func handleMessagesLoop(clientConn net.Conn, client *UserCredentials, receiveMsg
 }
 
 func isCommand(s string) bool {
-	return strings.HasPrefix(s, "/");
+	return strings.HasPrefix(s, "/")
 }
-func dispatchClientInput(input string, client *UserCredentials, clientConn net.Conn) error {
+func (client *Client) dispatchUserInput(input string) error {
 	if isCommand(input) {
-		return runUserCommand(input[1:], client, clientConn)
+		return client.runUserCommand(input)
 	} else {
-		response := broadcastMessageWait(input, client)
-		return sendResponse(response, clientConn)
+		response := client.hub.broadcastMessageWait(input, client.creds)
+		return client.sendResponse(response)
 	}
 }
 
-const LogoutCmd = "$logout$"
+type UserCommand string
 
-func runUserCommand(cmd string, client *UserCredentials, clientConn net.Conn) error {
-	err := sendResponse(ResponseOk, clientConn)
+const (
+	LogoutCmd UserCommand = "/quit"
+)
+
+func (client *Client) runUserCommand(cmd string) error {
+	err := client.sendResponse(ResponseOk)
 	if err != nil {
 		return err
 	}
 	switch cmd {
-	case "quit":
-		logout(client)
-		return passCommandToRunToClient(clientConn, LogoutCmd)
+	case string(LogoutCmd):
+		client.hub.Logout(client.creds)
+		return client.passCommandToUser(LogoutCmd)
 	default:
 		m := NewChatMessage(&UserCredentials{name: "server"}, "Invalid command")
-		return passMessageToClient(clientConn, m)
+		return client.passMessageToUser(m)
 	}
 }
 
-func passMessageToClient(writer io.Writer, msg ChatMessage) error {
-	_, err := writer.Write([]byte(msg.sender.name + ": " + msg.content + "\n"))
+func (client *Client) passMessageToUser(msg ChatMessage) error {
+	_, err := client.conn.Write([]byte(msg.sender.name + ": " + msg.content + "\n"))
 	return err
 }
-func passCommandToRunToClient(writer io.Writer, cmd string) error {
-	_, err := writer.Write([]byte(cmd + "\n"))
+func (client *Client) passCommandToUser(cmd UserCommand) error {
+	_, err := client.conn.Write([]byte(string(cmd) + "\n"))
 	return err
 }
 

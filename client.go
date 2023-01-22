@@ -97,8 +97,6 @@ func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 	}
 }
 
-var ErrServerLoggedUsOut = errors.New("server logged us out")
-
 func handleClientMessagesLoop(userInput_ *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
 	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
 	userInput := readAsyncIntoChan(userInput_)
@@ -108,9 +106,12 @@ func handleClientMessagesLoop(userInput_ *bufio.Scanner, out io.Writer, serverCo
 			if msg.err != nil {
 				return msg.err
 			}
-			if msg.val == LogoutCmd {
-				return ErrServerLoggedUsOut
-			} else {
+			if isCommand(msg.val) {
+				err := runClientCommand(UserCommand(msg.val))
+				if err != nil {
+					return ErrServerLoggedUsOut
+				}
+			} else { // normal message
 				fmt.Fprintln(out, msg.val)
 			}
 		case line := <-userInput:
@@ -124,6 +125,18 @@ func handleClientMessagesLoop(userInput_ *bufio.Scanner, out io.Writer, serverCo
 				return err
 			}
 		}
+	}
+}
+
+var ErrServerLoggedUsOut = errors.New("server logged us out")
+var ErrUnknownCommand = errors.New("unknown command")
+
+func runClientCommand(cmd UserCommand) error {
+	switch cmd {
+	case LogoutCmd:
+		return ErrServerLoggedUsOut
+	default:
+		return ErrUnknownCommand
 	}
 }
 

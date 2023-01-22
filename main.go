@@ -43,13 +43,13 @@ func server(port string) {
 	}
 	log.Printf("Listening at %s\n", l.Addr())
 	defer closePrintErr(l)
-
+	hub := NewHub()
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			log.Fatalln(err)
 		}
 		log.Printf("Connected: %s\n", c.RemoteAddr())
-		go handleClient(c)
+		go handleClient(hub, c)
 	}
 }

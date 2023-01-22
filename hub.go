@@ -11,10 +11,6 @@ func NewMessagePipe() (send chan<- ChatMessage, receive <-chan ChatMessage) {
 	return res, res
 }
 
-type UserCredentials struct {
-	name     string
-	password string
-}
 type Response string
 
 const (
@@ -28,45 +24,55 @@ const (
 	ResponseIoErrorOccurred Response = "IO error, couldn't get a response"
 )
 
-var activeUsers = make(map[UserCredentials]chan<- ChatMessage)
-var activeUsersLock = sync.RWMutex{}
+type Hub struct {
+	activeUsers     map[UserCredentials]*Client
+	activeUsersLock sync.RWMutex
 
-var userDB = make(map[string]string)
-var userDBLock = sync.RWMutex{}
+	userDB     map[string]string
+	userDBLock sync.RWMutex
+}
 
-func tryToAuthenticate(action AuthAction, user *UserCredentials,
-	sendMessage chan<- ChatMessage) Response {
-	activeUsersLock.Lock()
-	defer activeUsersLock.Unlock()
+func NewHub() *Hub {
+	return &Hub{
+		make(map[UserCredentials]*Client),
+		sync.RWMutex{},
+		make(map[string]string),
+		sync.RWMutex{},
+	}
+}
 
-	userDBLock.Lock()
-	defer userDBLock.Unlock()
+func (hub *Hub) TryToAuthenticate(action AuthAction, client *Client) Response {
+	hub.activeUsersLock.Lock()
+	defer hub.activeUsersLock.Unlock()
+
+	hub.userDBLock.Lock()
+	defer hub.userDBLock.Unlock()
 
 	switch action {
 	case ActionLogin:
-		pass, exists := userDB[user.name]
-		if !exists || pass != user.password {
+		pass, exists := hub.userDB[client.creds.name]
+		if !exists || pass != client.creds.password {
 			return ResponseInvalidCredentials
-		} else if _, isActive := activeUsers[*user]; isActive {
+		} else if _, isActive := hub.activeUsers[*client.creds]; isActive {
 			return ResponseUserAlreadyOnline
 		}
 	case ActionRegister:
-		if _, exists := userDB[user.name]; exists {
+		if _, exists := hub.userDB[client.creds.name]; exists {
 			return ResponseUsernameExists
 		}
 	default:
 		panic("unreachable")
 	}
-	userDB[user.name] = user.password
-	activeUsers[*user] = sendMessage
-	log.Printf("Logged in: %s\n", user.name)
+	hub.userDB[client.creds.name] = client.creds.password
+	hub.activeUsers[*client.creds] = client
+	log.Printf("Logged in: %s\n", client.creds.name)
 	return ResponseOk
 }
-func logout(user *UserCredentials) {
-	userDBLock.Lock()
-	defer userDBLock.Unlock()
-	delete(activeUsers, *user)
-	log.Printf("Logged out: %s\n", user.name)
+func (hub *Hub) Logout(creds *UserCredentials) {
+	hub.userDBLock.Lock()
+	defer hub.userDBLock.Unlock()
+	delete(hub.activeUsers, *creds)
+	log.Printf("Logged out: %s\n", creds.name)
 }
 
 type ChatMessage struct {
@@ -88,42 +94,48 @@ func (m *ChatMessage) WaitForAck() {
 	<-m.ack
 }
 
-func copyHashMap(m map[UserCredentials]chan<- ChatMessage) map[UserCredentials]chan<- ChatMessage {
-	res := make(map[UserCredentials]chan<- ChatMessage)
+func copyHashMap(m map[UserCredentials]*Client) map[UserCredentials]*Client {
+	res := make(map[UserCredentials]*Client)
 	for a, b := range m {
 		res[a] = b
 	}
 	return res
 }
 
-func broadcastMessageWait(content string, sender *UserCredentials) Response {
-	activeUsersLock.RLock()
-	cp := copyHashMap(activeUsers)
-	activeUsersLock.RUnlock()
+func (hub *Hub) broadcastMessageWait(content string, sender *UserCredentials) Response {
+	hub.activeUsersLock.RLock()
+	cp := copyHashMap(hub.activeUsers)
+	hub.activeUsersLock.RUnlock()
 
-	return sendMessageToAllUsersWait(content, sender, cp)
+	return sendMessageToAllClientsWait(content, sender, cp)
 }
 
-func sendMessageToAllUsersWait(contents string, sender *UserCredentials, users map[UserCredentials]chan<- ChatMessage) Response {
+func sendMessageToAllClientsWait(contents string, sender *UserCredentials, users map[UserCredentials]*Client) Response {
 	totalToSendTo := len(users) - 1
 	succeeded := 0
-	for client, sendMessage := range users {
-		if client == *sender {
+
+	go func() {
+		// for
+		// go Send message to user
+	}()
+
+	for _, client := range users {
+		if *client.creds == *sender {
 			continue
 		}
 
 		msg := NewChatMessage(sender, contents)
 
 		select {
-		case sendMessage <- msg:
+		case client.sendMsg <- msg:
 			select {
 			case <-msg.ack:
 				succeeded++
 			case <-time.After(time.Millisecond * 200):
-				log.Printf("Failed to send msg to user %s\n", client.name)
+				log.Printf("Failed to send msg to user %s\n", client.creds.name)
 			}
 		case <-time.After(time.Millisecond * 200):
-			log.Printf("Failed to send msg to user %s\n", client.name)
+			log.Printf("Failed to send msg to user %s\n", client.creds.name)
 		}
 	}
 
