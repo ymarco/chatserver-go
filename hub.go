@@ -137,7 +137,9 @@ func sendMessageToAllClientsWait(contents string, sender *UserCredentials, users
 	}
 
 	succeeded := 0
-	for err := range sendingErrors {
+	// a range would hang here, since we don't close the channel
+	for i := 0; i < totalToSendTo; i++ {
+		err := <-sendingErrors
 		if err == nil {
 			succeeded++
 		}
