@@ -141,7 +141,7 @@ func runClientCommand(cmd UserCommand) error {
 }
 
 func sendMsgWithTimeout(msg string, serverConn net.Conn) error {
-	serverConn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+	serverConn.SetWriteDeadline(time.Now().Add(MsgSendTimeout))
 	_, err := serverConn.Write([]byte(msg + "\n"))
 	serverConn.SetWriteDeadline(time.Time{})
 	return err
