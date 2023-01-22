@@ -54,6 +54,8 @@ func tryToAuthenticate(action AuthAction, user *User,
 		if _, exists := userDB[user.name]; exists {
 			return ResponseUsernameExists
 		}
+	default:
+		panic("unreachable")
 	}
 	userDB[user.name] = user.password
 	activeUsers[*user] = sendMessage

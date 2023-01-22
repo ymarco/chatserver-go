@@ -9,25 +9,24 @@ import (
 	"strings"
 )
 
-type AuthAction int
-
+type AuthAction string
 const (
-	ActionLogin AuthAction = iota
-	ActionRegister
+	ActionLogin AuthAction = "l"
+	ActionRegister AuthAction = "r"
+	ActionIOErr AuthAction = ""
 )
 
 var ErrClientHasQuit = io.EOF
 
 func strToAuthAction(s string) (AuthAction, error) {
-	switch s {
-	case "r":
-		return ActionRegister, nil
-	case "l":
-		return ActionLogin, nil
-	case "": // happens when the client quits without choosing
-		return ActionRegister, ErrClientHasQuit
+	a := AuthAction(s)
+	switch a {
+	case ActionRegister, ActionLogin:
+		return a, nil
+	case ActionIOErr: // happens when the client quits without choosing
+		return ActionIOErr, ErrClientHasQuit
 	default:
-		return ActionRegister, fmt.Errorf("weird output from clientConn: %s", s)
+		return ActionIOErr, fmt.Errorf("weird output from clientConn: %s", s)
 	}
 }
 
@@ -47,21 +46,21 @@ func acceptAuthRequest(clientConn net.Conn) (*User, AuthAction, error) {
 	clientOutput := bufio.NewScanner(clientConn)
 	choice, err := scanLine(clientOutput)
 	if err != nil {
-		return nil, ActionRegister, err
+		return nil, ActionIOErr, err
 	}
 	action, err := strToAuthAction(choice)
 	if err != nil {
-		return nil, ActionRegister, err
+		return nil, ActionIOErr, err
 	}
 
 	username, err := scanLine(clientOutput)
 	if err != nil {
-		return nil, ActionRegister, err
+		return nil, ActionIOErr, err
 	}
 
 	password, err := scanLine(clientOutput)
 	if err != nil {
-		return nil, ActionRegister, err
+		return nil, ActionIOErr, err
 	}
 
 	return &User{username, password}, action, nil

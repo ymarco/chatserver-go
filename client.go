@@ -192,13 +192,12 @@ func ChooseLoginOrRegister(userInput *bufio.Scanner, out io.Writer) (AuthAction,
 
 		c, err := scanLine(userInput)
 		if err != nil {
-			return ActionRegister, err
+			return ActionIOErr, err
 		}
-		switch c {
-		case "r":
-			return ActionRegister, nil
-		case "l":
-			return ActionLogin, nil
+		a := AuthAction(c)
+		switch a {
+		case ActionLogin, ActionRegister:
+			return a, nil
 		default:
 			continue
 		}
@@ -232,16 +231,8 @@ func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (*Use
 var ErrOddOutput = errors.New("weird output from server")
 
 func authenticate(action AuthAction, user *User, serverConn io.ReadWriter) (error, Response) {
-	actionCh := ""
-	switch action {
-	case ActionLogin:
-		actionCh = "l"
-	case ActionRegister:
-		actionCh = "r"
-	}
-
 	_, err := serverConn.Write([]byte(
-		actionCh + "\n" +
+		string(action) + "\n" +
 			user.name + "\n" +
 			user.password + "\n"))
 	if err != nil {
