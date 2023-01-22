@@ -42,7 +42,7 @@ func scanLine(s *bufio.Scanner) (string, error) {
 	return s.Text(), nil
 }
 
-func acceptAuthRequest(clientConn net.Conn) (*User, AuthAction, error) {
+func acceptAuthRequest(clientConn net.Conn) (*UserCredentials, AuthAction, error) {
 	clientOutput := bufio.NewScanner(clientConn)
 	choice, err := scanLine(clientOutput)
 	if err != nil {
@@ -63,7 +63,7 @@ func acceptAuthRequest(clientConn net.Conn) (*User, AuthAction, error) {
 		return nil, ActionIOErr, err
 	}
 
-	return &User{username, password}, action, nil
+	return &UserCredentials{username, password}, action, nil
 }
 
 func handleClient(clientConn net.Conn) {
@@ -84,7 +84,7 @@ func handleClient(clientConn net.Conn) {
 	handleMessagesLoop(clientConn, client, receiveMsg)
 }
 
-func acceptAuthRetry(clientConn net.Conn) (*User, <-chan ChatMessage, error) {
+func acceptAuthRetry(clientConn net.Conn) (*UserCredentials, <-chan ChatMessage, error) {
 	for {
 		client, action, err := acceptAuthRequest(clientConn)
 		if err != nil {
@@ -111,7 +111,7 @@ func sendResponse(r Response, clientConn net.Conn) error {
 	return err
 }
 
-func handleMessagesLoop(clientConn net.Conn, client *User, receiveMsg <-chan ChatMessage) {
+func handleMessagesLoop(clientConn net.Conn, client *UserCredentials, receiveMsg <-chan ChatMessage) {
 	clientInput := readAsyncIntoChan(bufio.NewScanner(clientConn))
 
 	for {
@@ -142,7 +142,7 @@ func handleMessagesLoop(clientConn net.Conn, client *User, receiveMsg <-chan Cha
 func isCommand(s string) bool {
 	return strings.HasPrefix(s, "/");
 }
-func dispatchClientInput(input string, client *User, clientConn net.Conn) error {
+func dispatchClientInput(input string, client *UserCredentials, clientConn net.Conn) error {
 	if isCommand(input) {
 		return runUserCommand(input[1:], client, clientConn)
 	} else {
@@ -153,7 +153,7 @@ func dispatchClientInput(input string, client *User, clientConn net.Conn) error 
 
 const LogoutCmd = "$logout$"
 
-func runUserCommand(cmd string, client *User, clientConn net.Conn) error {
+func runUserCommand(cmd string, client *UserCredentials, clientConn net.Conn) error {
 	err := sendResponse(ResponseOk, clientConn)
 	if err != nil {
 		return err
@@ -163,7 +163,7 @@ func runUserCommand(cmd string, client *User, clientConn net.Conn) error {
 		logout(client)
 		return passCommandToRunToClient(clientConn, LogoutCmd)
 	default:
-		m := NewChatMessage(&User{name: "server"}, "Invalid command")
+		m := NewChatMessage(&UserCredentials{name: "server"}, "Invalid command")
 		return passMessageToClient(clientConn, m)
 	}
 }

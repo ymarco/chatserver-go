@@ -11,7 +11,7 @@ func NewMessagePipe() (send chan<- ChatMessage, receive <-chan ChatMessage) {
 	return res, res
 }
 
-type User struct {
+type UserCredentials struct {
 	name     string
 	password string
 }
@@ -28,13 +28,13 @@ const (
 	ResponseIoErrorOccurred Response = "IO error, couldn't get a response"
 )
 
-var activeUsers = make(map[User]chan<- ChatMessage)
+var activeUsers = make(map[UserCredentials]chan<- ChatMessage)
 var activeUsersLock = sync.RWMutex{}
 
 var userDB = make(map[string]string)
 var userDBLock = sync.RWMutex{}
 
-func tryToAuthenticate(action AuthAction, user *User,
+func tryToAuthenticate(action AuthAction, user *UserCredentials,
 	sendMessage chan<- ChatMessage) Response {
 	activeUsersLock.Lock()
 	defer activeUsersLock.Unlock()
@@ -62,7 +62,7 @@ func tryToAuthenticate(action AuthAction, user *User,
 	log.Printf("Logged in: %s\n", user.name)
 	return ResponseOk
 }
-func logout(user *User) {
+func logout(user *UserCredentials) {
 	userDBLock.Lock()
 	defer userDBLock.Unlock()
 	delete(activeUsers, *user)
@@ -71,11 +71,11 @@ func logout(user *User) {
 
 type ChatMessage struct {
 	ack     chan struct{}
-	sender  *User
+	sender  *UserCredentials
 	content string
 }
 
-func NewChatMessage(user *User, content string) ChatMessage {
+func NewChatMessage(user *UserCredentials, content string) ChatMessage {
 	return ChatMessage{make(chan struct{}, 1), user, content}
 }
 
@@ -88,15 +88,15 @@ func (m *ChatMessage) WaitForAck() {
 	<-m.ack
 }
 
-func copyHashMap(m map[User]chan<- ChatMessage) map[User]chan<- ChatMessage {
-	res := make(map[User]chan<- ChatMessage)
+func copyHashMap(m map[UserCredentials]chan<- ChatMessage) map[UserCredentials]chan<- ChatMessage {
+	res := make(map[UserCredentials]chan<- ChatMessage)
 	for a, b := range m {
 		res[a] = b
 	}
 	return res
 }
 
-func broadcastMessageWait(content string, sender *User) Response {
+func broadcastMessageWait(content string, sender *UserCredentials) Response {
 	activeUsersLock.RLock()
 	cp := copyHashMap(activeUsers)
 	activeUsersLock.RUnlock()
@@ -104,7 +104,7 @@ func broadcastMessageWait(content string, sender *User) Response {
 	return sendMessageToAllUsersWait(content, sender, cp)
 }
 
-func sendMessageToAllUsersWait(contents string, sender *User, users map[User]chan<- ChatMessage) Response {
+func sendMessageToAllUsersWait(contents string, sender *UserCredentials, users map[UserCredentials]chan<- ChatMessage) Response {
 	totalToSendTo := len(users) - 1
 	succeeded := 0
 	for client, sendMessage := range users {

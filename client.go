@@ -56,7 +56,7 @@ func runClientUntilDisconnected(port string, in io.Reader, out io.Writer) (shoul
 	return false // unreachable
 }
 
-func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn net.Conn) (*User, error) {
+func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn net.Conn) (*UserCredentials, error) {
 	for {
 		me, action, err := promptForAuthTypeAndUser(userInput, out)
 		if err != nil {
@@ -151,7 +151,7 @@ func expectResponseWithTimeout(serverOutput <-chan ReadOutput, r Response) error
 	}
 }
 
-func promptForAuthTypeAndUser(userInput *bufio.Scanner, out io.Writer) (*User, AuthAction, error) {
+func promptForAuthTypeAndUser(userInput *bufio.Scanner, out io.Writer) (*UserCredentials, AuthAction, error) {
 	action, err := ChooseLoginOrRegister(userInput, out)
 	if err != nil {
 		return nil, action, err
@@ -163,7 +163,7 @@ func promptForAuthTypeAndUser(userInput *bufio.Scanner, out io.Writer) (*User, A
 
 var ErrInvalidAuth = errors.New("username exists and such")
 
-func authenticateWithServer(out io.Writer, client *User, action AuthAction,
+func authenticateWithServer(out io.Writer, client *UserCredentials, action AuthAction,
 	serverConn io.ReadWriter) error {
 	err, response := authenticate(action, client, serverConn)
 	if err != nil {
@@ -196,7 +196,7 @@ func ChooseLoginOrRegister(userInput *bufio.Scanner, out io.Writer) (AuthAction,
 
 var ErrEmptyUsernameOrPassword = errors.New("empty username or password")
 
-func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (*User, error) {
+func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (*UserCredentials, error) {
 	fmt.Fprintf(out, "Username:\n")
 
 	username, err := scanLine(userInput)
@@ -215,12 +215,12 @@ func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (*Use
 	if password == "" {
 		return nil, ErrEmptyUsernameOrPassword
 	}
-	return &User{username, password}, nil
+	return &UserCredentials{username, password}, nil
 }
 
 var ErrOddOutput = errors.New("weird output from server")
 
-func authenticate(action AuthAction, user *User, serverConn io.ReadWriter) (error, Response) {
+func authenticate(action AuthAction, user *UserCredentials, serverConn io.ReadWriter) (error, Response) {
 	_, err := serverConn.Write([]byte(
 		string(action) + "\n" +
 			user.name + "\n" +
