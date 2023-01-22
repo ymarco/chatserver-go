@@ -70,7 +70,7 @@ func acceptAuthRequest(clientConn net.Conn) (*User, AuthAction, error) {
 func handleClient(clientConn net.Conn) {
 	defer closePrintErr(clientConn)
 	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
-	client, receiveMsg, err := tryToAcceptAuthRetry(clientConn)
+	client, receiveMsg, err := acceptAuthRetry(clientConn)
 	if err == ErrClientHasQuit {
 		return
 	} else if err != nil {
@@ -85,7 +85,7 @@ func handleClient(clientConn net.Conn) {
 	handleMessagesLoop(clientConn, client, receiveMsg)
 }
 
-func tryToAcceptAuthRetry(clientConn net.Conn) (*User, <-chan ChatMessage, error) {
+func acceptAuthRetry(clientConn net.Conn) (*User, <-chan ChatMessage, error) {
 	for {
 		client, action, err := acceptAuthRequest(clientConn)
 		if err != nil {
