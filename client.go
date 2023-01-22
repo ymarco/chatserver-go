@@ -120,7 +120,7 @@ func handleClientMessagesLoop(userInput_ *bufio.Scanner, out io.Writer, serverCo
 			if err := sendMsgWithTimeout(line.val, serverConn); err != nil {
 				return err
 			}
-			if err := expectOkWithTimeout(serverOutput); err != nil {
+			if err := expectResponseWithTimeout(serverOutput, ResponseOk); err != nil {
 				return err
 			}
 		}
@@ -136,13 +136,13 @@ func sendMsgWithTimeout(msg string, serverConn net.Conn) error {
 
 var ErrServerTimedOut = errors.New("server timed out")
 
-func expectOkWithTimeout(serverOutput <-chan ReadOutput) error {
+func expectResponseWithTimeout(serverOutput <-chan ReadOutput, r Response) error {
 	select {
 	case ack := <-serverOutput:
 		if ack.err != nil {
 			return ack.err
 		}
-		if Response(ack.val) != ResponseOk {
+		if Response(ack.val) != r {
 			return fmt.Errorf("Message sending error: %s\n", ack.val)
 		}
 		return nil
