@@ -78,11 +78,19 @@ func acceptAuthRequest(clientConn net.Conn) (*UserCredentials, AuthAction, error
 
 	return &UserCredentials{username, password}, action, nil
 }
+func NewEmptyClient(conn net.Conn, hub *Hub) *Client {
+	sendMsg, receiveMsg := NewMessagePipe()
+	return &Client{conn: conn, hub: hub, sendMsg: sendMsg, receiveMsg: receiveMsg}
+}
+func (client *Client) Close() error {
+	close(client.sendMsg)
+	return client.conn.Close()
+}
 
 func handleClient(hub *Hub, clientConn net.Conn) {
-	defer closePrintErr(clientConn)
+	client := NewEmptyClient(clientConn, hub)
+	defer closePrintErr(client)
 	defer log.Printf("Disconnected: %s\n", clientConn.RemoteAddr())
-	client := &Client{conn: clientConn, hub: hub}
 	err := client.acceptAuthRetry()
 	if err == ErrClientHasQuit {
 		return
@@ -106,10 +114,6 @@ func (client *Client) acceptAuthRetry() error {
 			return err
 		}
 		client.creds = creds
-
-		send, receive := NewMessagePipe()
-		client.sendMsg = send
-		client.receiveMsg = receive
 
 		response := client.hub.tryToAuthenticate(action, client)
 		if response == ResponseOk {

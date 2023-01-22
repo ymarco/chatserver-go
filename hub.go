@@ -7,11 +7,6 @@ import (
 	"time"
 )
 
-func NewMessagePipe() (send chan<- ChatMessage, receive <-chan ChatMessage) {
-	res := make(chan ChatMessage)
-	return res, res
-}
-
 type Response string
 
 const (
@@ -103,6 +98,11 @@ func (m *ChatMessage) Ack() {
 
 func (m *ChatMessage) WaitForAck() {
 	<-m.ack
+}
+
+func NewMessagePipe() (send chan<- ChatMessage, receive <-chan ChatMessage) {
+	res := make(chan ChatMessage)
+	return res, res
 }
 
 func copyHashMap(m map[UserCredentials]*Client) map[UserCredentials]*Client {
