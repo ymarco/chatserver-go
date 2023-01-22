@@ -65,14 +65,15 @@ func (hub *Hub) clientIsValidToAuthenticate(action AuthAction, creds *UserCreden
 		} else if _, isActive := hub.activeUsers[*creds]; isActive {
 			return ResponseUserAlreadyOnline
 		}
+		return ResponseOk
 	case ActionRegister:
 		if _, exists := hub.userDB[creds.name]; exists {
 			return ResponseUsernameExists
 		}
+		return ResponseOk
 	default:
 		panic("unreachable")
 	}
-	panic("unreachable")
 }
 func (hub *Hub) logClientIn(client *Client) {
 	hub.userDB[client.creds.name] = client.creds.password
