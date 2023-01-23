@@ -163,6 +163,10 @@ func isCommand(s string) bool {
 }
 func (client *Client) dispatchUserInput(input string) error {
 	if isCommand(input) {
+		err := client.passResponseToUser(ResponseOk)
+		if err != nil {
+			return err
+		}
 		return client.runUserCommand(input)
 	} else {
 		response := client.hub.broadcastMessageWait(input, client.creds)
@@ -177,10 +181,6 @@ const (
 )
 
 func (client *Client) runUserCommand(cmd string) error {
-	err := client.passResponseToUser(ResponseOk)
-	if err != nil {
-		return err
-	}
 	switch cmd {
 	case string(LogoutCmd):
 		client.hub.Logout(client.creds)
