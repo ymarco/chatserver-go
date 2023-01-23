@@ -37,19 +37,19 @@ func closePrintErr(c Closer) {
 }
 
 func server(port string) {
-	l, err := net.Listen("tcp4", port)
+	listener, err := net.Listen("tcp4", port)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	log.Printf("Listening at %s\n", l.Addr())
-	defer closePrintErr(l)
+	log.Printf("Listening at %s\n", listener.Addr())
+	defer closePrintErr(listener)
 	hub := NewHub()
 	for {
-		c, err := l.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			log.Fatalln(err)
 		}
-		log.Printf("Connected: %s\n", c.RemoteAddr())
-		go handleClient(hub, c)
+		log.Printf("Connected: %s\n", conn.RemoteAddr())
+		go hub.handleNewConnection(conn)
 	}
 }

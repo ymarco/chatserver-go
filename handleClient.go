@@ -93,11 +93,9 @@ func (client *Client) Close() error {
 	return client.conn.Close()
 }
 
-func handleNewConnection(hub *Hub, conn net.Conn) {
-	client := NewEmptyClient(conn, hub)
-	defer closePrintErr(client)
+func (hub *Hub) handleNewConnection(conn net.Conn) {
 	defer log.Printf("Disconnected: %s\n", conn.RemoteAddr())
-	err := client.acceptAuthRetry()
+	client, err := acceptAuthRetry(conn, hub)
 	if err == ErrClientHasQuit {
 		return
 	} else if err != nil {
