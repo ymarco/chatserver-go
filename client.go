@@ -38,7 +38,6 @@ func connectToSocket(port string, userInput <-chan ReadOutput, out io.Writer) *U
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer closePrintErr(serverConn)
 	log.Printf("Connected to %s\n", serverConn.RemoteAddr())
 	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
 	serverInput := serverConn.(io.Writer)
@@ -48,6 +47,7 @@ func connectToSocket(port string, userInput <-chan ReadOutput, out io.Writer) *U
 func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io.Writer) (shouldRetry bool) {
 	log.SetOutput(out)
 	client := connectToSocket(port, userInput, out)
+	defer closePrintErr(client.serverInput.(net.Conn))
 	me, err := authenticateWithRetry(client)
 	if err == io.EOF {
 		fmt.Fprintln(out, "Server closed, retrying")
