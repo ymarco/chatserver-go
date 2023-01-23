@@ -45,6 +45,8 @@ func runClientUntilDisconnected(port string, in io.Reader, out io.Writer) (shoul
 	case ErrServerLoggedUsOut:
 		log.Println("Logged out and disconnected. Reconnecting...")
 		return true
+	case ErrClientHasQuitExtinguished:
+		return false
 	case io.EOF, ErrServerTimedOut, net.ErrClosed:
 		log.Println("Server closed, retrying in 5 seconds")
 		time.Sleep(5 * time.Second)
@@ -56,9 +58,13 @@ func runClientUntilDisconnected(port string, in io.Reader, out io.Writer) (shoul
 	return false // unreachable
 }
 
+var ErrClientHasQuitExtinguished = errors.New("client has quit")
 func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn net.Conn) (*UserCredentials, error) {
 	for {
 		me, action, err := promptForAuthTypeAndUser(userInput, out)
+		if err == ErrClientHasQuit {
+			return nil, ErrClientHasQuitExtinguished
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -115,6 +121,9 @@ func handleClientMessagesLoop(userInputScanner *bufio.Scanner, out io.Writer, se
 				fmt.Fprintln(out, msg.val)
 			}
 		case line := <-userInput:
+			if line.err == ErrClientHasQuit{
+				return ErrClientHasQuitExtinguished
+			}
 			if line.err != nil {
 				return line.err
 			}
