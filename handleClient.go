@@ -186,8 +186,8 @@ func (client *Client) runUserCommand(cmd string) error {
 		client.hub.Logout(client.creds)
 		return client.passCommandToUser(LogoutCmd)
 	default:
-		m := NewChatMessage(&UserCredentials{name: "server"}, "Invalid command")
-		return client.passMessageToUser(m)
+		msg := NewChatMessage(&UserCredentials{name: "server"}, "Invalid command")
+		return client.passMessageToUser(msg)
 	}
 }
 

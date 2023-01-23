@@ -176,9 +176,9 @@ func promptForAuthTypeAndUser(userInput *bufio.Scanner, out io.Writer) (*UserCre
 
 var ErrInvalidAuth = errors.New("username exists and such")
 
-func authenticateWithServer(out io.Writer, client *UserCredentials, action AuthAction,
+func authenticateWithServer(out io.Writer, creds *UserCredentials, action AuthAction,
 	serverConn io.ReadWriter) error {
-	err, response := authenticate(action, client, serverConn)
+	err, response := authenticate(action, creds, serverConn)
 	if err != nil {
 		return err
 	}
@@ -233,11 +233,11 @@ func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (*Use
 
 var ErrOddOutput = errors.New("weird output from server")
 
-func authenticate(action AuthAction, user *UserCredentials, serverConn io.ReadWriter) (error, Response) {
+func authenticate(action AuthAction, creds *UserCredentials, serverConn io.ReadWriter) (error, Response) {
 	_, err := serverConn.Write([]byte(
 		string(action) + "\n" +
-			user.name + "\n" +
-			user.password + "\n"))
+			creds.name + "\n" +
+			creds.password + "\n"))
 	if err != nil {
 		return err, ResponseIoErrorOccurred
 	}
@@ -249,18 +249,13 @@ func authenticate(action AuthAction, user *UserCredentials, serverConn io.ReadWr
 		return err, ResponseIoErrorOccurred
 	}
 
-	switch Response(status) {
-	case ResponseOk:
-		return nil, ResponseOk
-	case ResponseUserAlreadyOnline:
-		return nil, ResponseUserAlreadyOnline
-	case ResponseUsernameExists:
-		return nil, ResponseUsernameExists
-	case ResponseInvalidCredentials:
-		return nil, ResponseInvalidCredentials
-
-	default:
-		log.Println(status)
-		return ErrOddOutput, ResponseIoErrorOccurred
+	response := Response(status)
+	if response == ResponseOk ||
+		response == ResponseUserAlreadyOnline ||
+		response == ResponseUsernameExists ||
+		response == ResponseInvalidCredentials {
+		return nil, response
 	}
+	log.Println(status)
+	return ErrOddOutput, ResponseIoErrorOccurred
 }
