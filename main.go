@@ -13,8 +13,8 @@ func main() {
 			os.Args[0])
 		os.Exit(1)
 	}
-	port := ":" + os.Args[1]
-	switch os.Args[2] {
+	port, mode := ":"+os.Args[1], os.Args[2]
+	switch mode {
 	case "client":
 		client(port, os.Stdin, os.Stdout)
 	case "server":

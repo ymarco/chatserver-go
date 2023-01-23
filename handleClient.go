@@ -37,15 +37,14 @@ type AuthRequest struct {
 
 var ErrClientHasQuit = io.EOF
 
-func strToAuthAction(s string) (AuthAction, error) {
-	a := AuthAction(s)
-	switch a {
+func strToAuthAction(str string) (AuthAction, error) {
+	switch action := AuthAction(str); action {
 	case ActionRegister, ActionLogin:
-		return a, nil
+		return action, nil
 	case ActionIOErr: // happens when the client quits without choosing
 		return ActionIOErr, ErrClientHasQuit
 	default:
-		return ActionIOErr, fmt.Errorf("weird output from clientConn: %s", s)
+		return ActionIOErr, fmt.Errorf("weird output from clientConn: %s", str)
 	}
 }
 
@@ -108,7 +107,6 @@ func (hub *Hub) handleNewConnection(conn net.Conn) {
 	if err != ErrClientHasQuit {
 		log.Println(err)
 	}
-
 }
 
 func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {

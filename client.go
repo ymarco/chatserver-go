@@ -68,8 +68,8 @@ func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn n
 			return me, err
 		}
 	}
-
 }
+
 func errIsConnectionRefused(err error) bool {
 	if oerr, ok := err.(*net.OpError); ok {
 		if serr, ok := oerr.Err.(*os.SyscallError); ok && serr.Err == syscall.ECONNREFUSED {
@@ -97,9 +97,9 @@ func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 	}
 }
 
-func handleClientMessagesLoop(userInput_ *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
+func handleClientMessagesLoop(userInputScanner *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
 	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
-	userInput := readAsyncIntoChan(userInput_)
+	userInput := readAsyncIntoChan(userInputScanner)
 	for {
 		select {
 		case msg := <-serverOutput:
@@ -261,6 +261,6 @@ func authenticate(action AuthAction, user *UserCredentials, serverConn io.ReadWr
 
 	default:
 		log.Println(status)
-		return ErrOddOutput, ResponseOk
+		return ErrOddOutput, ResponseIoErrorOccurred
 	}
 }

@@ -30,10 +30,8 @@ type Hub struct {
 
 func NewHub() *Hub {
 	return &Hub{
-		make(map[UserCredentials]*Client),
-		sync.RWMutex{},
-		make(map[string]string),
-		sync.RWMutex{},
+		activeUsers: make(map[UserCredentials]*Client),
+		userDB:      make(map[string]string),
 	}
 }
 
