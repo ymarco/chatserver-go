@@ -122,7 +122,7 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {
 		}
 
 		// try to communicate that we're retrying
-		err = client.passResponseToUser(response)
+		err = passResponseToUser(clientConn, response)
 		if err != nil {
 			log.Printf("Error with %s: %s\n", client.creds.name, err)
 			return nil, err
@@ -130,9 +130,12 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {
 	}
 }
 
-func (client *Client) passResponseToUser(r Response) error {
-	_, err := client.conn.Write([]byte(string(r) + "\n"))
+func passResponseToUser(conn net.Conn, r Response) error {
+	_, err := conn.Write([]byte(string(r) + "\n"))
 	return err
+}
+func (client *Client) passResponseToUser(r Response) error {
+	return passResponseToUser(client.conn, r)
 }
 
 func (client *Client) handleMessagesLoop() error {
