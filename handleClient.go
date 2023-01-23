@@ -29,6 +29,12 @@ const (
 	ActionIOErr    AuthAction = ""
 )
 
+type AuthRequest struct {
+	authType AuthAction
+	conn     net.Conn
+	creds    *UserCredentials
+}
+
 var ErrClientHasQuit = io.EOF
 
 func strToAuthAction(s string) (AuthAction, error) {
@@ -55,32 +61,32 @@ func scanLine(s *bufio.Scanner) (string, error) {
 	return s.Text(), nil
 }
 
-func acceptAuthRequest(clientConn net.Conn) (*UserCredentials, AuthAction, error) {
+func acceptAuthRequest(clientConn net.Conn) (*AuthRequest, error) {
 	clientOutput := bufio.NewScanner(clientConn)
 	choice, err := scanLine(clientOutput)
 	if err != nil {
-		return nil, ActionIOErr, err
+		return nil, err
 	}
 	action, err := strToAuthAction(choice)
 	if err != nil {
-		return nil, ActionIOErr, err
+		return nil, err
 	}
 
 	username, err := scanLine(clientOutput)
 	if err != nil {
-		return nil, ActionIOErr, err
+		return nil, err
 	}
 
 	password, err := scanLine(clientOutput)
 	if err != nil {
-		return nil, ActionIOErr, err
+		return nil, err
 	}
 
-	return &UserCredentials{username, password}, action, nil
+	return &AuthRequest{action, clientConn, &UserCredentials{username, password}}, nil
 }
-func NewEmptyClient(conn net.Conn, hub *Hub) *Client {
+func (hub *Hub) newClient(r *AuthRequest) *Client {
 	sendMsg, receiveMsg := NewMessagePipe()
-	return &Client{conn: conn, hub: hub, sendMsg: sendMsg, receiveMsg: receiveMsg}
+	return &Client{receiveMsg, sendMsg, r.creds, r.conn, hub}
 }
 func (client *Client) Close() error {
 	close(client.sendMsg)
@@ -107,25 +113,23 @@ func handleNewConnection(hub *Hub, conn net.Conn) {
 
 }
 
-func (client *Client) acceptAuthRetry() error {
+func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {
 	for {
-		creds, action, err := acceptAuthRequest(client.conn)
+		request, err := acceptAuthRequest(clientConn)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		client.creds = creds
 
-		response := client.hub.tryToAuthenticate(action, client)
+		response, client := hub.tryToAuthenticate(request)
 		if response == ResponseOk {
-			err := client.passResponseToUser(ResponseOk)
-			return err
+			return client, client.passResponseToUser(ResponseOk)
 		}
 
 		// try to communicate that we're retrying
 		err = client.passResponseToUser(response)
 		if err != nil {
 			log.Printf("Error with %s: %s\n", client.creds.name, err)
-			return err
+			return nil, err
 		}
 	}
 }

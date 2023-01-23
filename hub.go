@@ -37,32 +37,31 @@ func NewHub() *Hub {
 	}
 }
 
-func (hub *Hub) tryToAuthenticate(action AuthAction, client *Client) Response {
+func (hub *Hub) tryToAuthenticate(request *AuthRequest) (Response, *Client) {
+	response := hub.testAuth(request)
+	if response == ResponseOk {
+		return response, hub.logClientIn(request)
+	}
+	return response, nil
+}
+func (hub *Hub) testAuth(request *AuthRequest) Response {
 	hub.activeUsersLock.Lock()
 	defer hub.activeUsersLock.Unlock()
 
 	hub.userDBLock.Lock()
 	defer hub.userDBLock.Unlock()
 
-	response := hub.clientIsValidToAuthenticate(action, client.creds)
-	if response == ResponseOk {
-		hub.logClientIn(client)
-		log.Printf("Logged in: %s\n", client.creds.name)
-	}
-	return response
-}
-func (hub *Hub) clientIsValidToAuthenticate(action AuthAction, creds *UserCredentials) Response {
-	switch action {
+	switch request.authType {
 	case ActionLogin:
-		pass, exists := hub.userDB[creds.name]
-		if !exists || pass != creds.password {
+		pass, exists := hub.userDB[request.creds.name]
+		if !exists || pass != request.creds.password {
 			return ResponseInvalidCredentials
-		} else if _, isActive := hub.activeUsers[*creds]; isActive {
+		} else if _, isActive := hub.activeUsers[*request.creds]; isActive {
 			return ResponseUserAlreadyOnline
 		}
 		return ResponseOk
 	case ActionRegister:
-		if _, exists := hub.userDB[creds.name]; exists {
+		if _, exists := hub.userDB[request.creds.name]; exists {
 			return ResponseUsernameExists
 		}
 		return ResponseOk
@@ -70,13 +69,22 @@ func (hub *Hub) clientIsValidToAuthenticate(action AuthAction, creds *UserCreden
 		panic("unreachable")
 	}
 }
-func (hub *Hub) logClientIn(client *Client) {
-	hub.userDB[client.creds.name] = client.creds.password
-	hub.activeUsers[*client.creds] = client
-}
-func (hub *Hub) Logout(creds *UserCredentials) {
+func (hub *Hub) logClientIn(request *AuthRequest) *Client {
+	hub.activeUsersLock.Lock()
+	defer hub.activeUsersLock.Unlock()
+
 	hub.userDBLock.Lock()
 	defer hub.userDBLock.Unlock()
+
+	client := hub.newClient(request)
+	hub.userDB[client.creds.name] = client.creds.password
+	hub.activeUsers[*client.creds] = client
+	log.Printf("Logged in: %s\n", client.creds.name)
+	return client
+}
+func (hub *Hub) Logout(creds *UserCredentials) {
+	hub.activeUsersLock.Lock()
+	defer hub.activeUsersLock.Unlock()
 	delete(hub.activeUsers, *creds)
 	log.Printf("Logged out: %s\n", creds.name)
 }
