@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,7 +17,7 @@ const (
 	ResponseUsernameExists     Response = "Username already exists"
 	ResponseInvalidCredentials Response = "Wrong username or password"
 	ResponseMsgFailedForSome   Response = "Message failed to send to some users"
-	ResponseMsgFailedToAll     Response = "Message failed to send to any users"
+	ResponseMsgFailedForAll    Response = "Message failed to send to any users"
 	// ResponseIoErrorOccurred should be returned along with a normal error type
 	ResponseIoErrorOccurred Response = "IO error, couldn't get a response"
 )
@@ -124,36 +126,32 @@ func (hub *Hub) broadcastMessageWait(content string, sender *UserCredentials) Re
 	cp := copyHashMap(hub.activeUsers)
 	hub.activeUsersLock.RUnlock()
 
-	return sendMessageToAllClientsWait(content, sender, cp)
+	return sendMsgToAllClientsWithTimeout(content, sender, cp)
 }
 
-func sendMessageToAllClientsWait(contents string, sender *UserCredentials, users map[UserCredentials]*Client) Response {
+func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, users map[UserCredentials]*Client) Response {
 	totalToSendTo := len(users) - 1
 	if totalToSendTo == 0 {
 		return ResponseOk
 	}
 
-	sendingErrors := make(chan error, totalToSendTo)
+	var succeeded int64 = 0
+	ctx, cancel := context.WithTimeout(context.Background(), MsgSendTimeout)
+	defer cancel() // useless since we ourselves wait on <-Done(), but there's
+	// an error otherwise
 	for _, client := range users {
 		if *client.creds == *sender {
 			continue
 		}
 		go func(client *Client) {
-			sendingErrors <- sendMessageToClientWithTimeout(client, contents, sender)
+			sendMessageToClient(client, contents, sender, ctx)
+			atomic.AddInt64(&succeeded, 1)
 		}(client)
 	}
-
-	succeeded := 0
-	// a range would hang here, since we don't close the channel
-	for i := 0; i < totalToSendTo; i++ {
-		err := <-sendingErrors
-		if err == nil {
-			succeeded++
-		}
-	}
+	<-ctx.Done()
 	if succeeded == 0 {
-		return ResponseMsgFailedToAll
-	} else if succeeded < totalToSendTo {
+		return ResponseMsgFailedForAll
+	} else if succeeded < int64(totalToSendTo) {
 		return ResponseMsgFailedForSome
 	} else {
 		return ResponseOk
@@ -164,20 +162,15 @@ var ErrSendingTimedOut = errors.New("couldn't forward message to client: timed o
 
 const MsgSendTimeout = time.Millisecond * 200
 
-// REVIEW currently messages that the client times out on are lost
-func sendMessageToClientWithTimeout(client *Client, msgContent string,
-	sender *UserCredentials) error {
+func sendMessageToClient(client *Client, msgContent string,
+	sender *UserCredentials, ctx context.Context) {
 	msg := NewChatMessage(sender, msgContent)
-
 	select {
+	case <-ctx.Done():
 	case client.sendMsg <- msg:
 		select {
 		case <-msg.ack:
-			return nil
-		case <-time.After(MsgSendTimeout):
-			return ErrSendingTimedOut
+		case <-ctx.Done():
 		}
-	case <-time.After(MsgSendTimeout):
-		return ErrSendingTimedOut
 	}
 }
