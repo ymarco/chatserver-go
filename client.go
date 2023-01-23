@@ -231,7 +231,8 @@ func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (*Use
 	return &UserCredentials{username, password}, nil
 }
 
-var ErrOddOutput = errors.New("weird output from server")
+var ErrOddOutput = errors.New("unexpected output from server")
+var ResponseUnknown Response = "unexpected output from server"
 
 func authenticate(action AuthAction, creds *UserCredentials, serverConn io.ReadWriter) (error, Response) {
 	_, err := serverConn.Write([]byte(
@@ -257,5 +258,5 @@ func authenticate(action AuthAction, creds *UserCredentials, serverConn io.ReadW
 		return nil, response
 	}
 	log.Println(status)
-	return ErrOddOutput, ResponseIoErrorOccurred
+	return ErrOddOutput, ResponseUnknown
 }
