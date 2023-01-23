@@ -13,32 +13,51 @@ import (
 )
 
 func client(port string, in io.Reader, out io.Writer) {
+	userInput := readAsyncIntoChan(bufio.NewScanner(in))
+
 	shouldRetry := true
 	for shouldRetry {
-		shouldRetry = runClientUntilDisconnected(port, in, out)
+		shouldRetry = runClientUntilDisconnected(port, userInput, out)
 	}
 }
 
-func runClientUntilDisconnected(port string, in io.Reader, out io.Writer) (shouldRetry bool) {
-	log.SetOutput(out)
+type UnauthenticatedClient struct {
+	serverOutput <-chan ReadOutput
+	serverInput  io.Writer
+
+	userInput  <-chan ReadOutput
+	userOutput io.Writer
+}
+type AuthenticatedClient struct {
+	UnauthenticatedClient
+	creds *UserCredentials
+}
+
+func connectToSocket(port string, userInput <-chan ReadOutput, out io.Writer) *UnauthenticatedClient {
 	serverConn, err := connectToPortWithRetry(port, out)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer closePrintErr(serverConn)
 	log.Printf("Connected to %s\n", serverConn.RemoteAddr())
+	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
+	serverInput := serverConn.(io.Writer)
 
-	userInput := bufio.NewScanner(in)
-	me, err := authenticateWithRetry(userInput, out, serverConn)
+	return &UnauthenticatedClient{serverOutput, serverInput, userInput, out}
+}
+func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io.Writer) (shouldRetry bool) {
+	log.SetOutput(out)
+	client := connectToSocket(port, userInput, out)
+	me, err := authenticateWithRetry(client)
 	if err == io.EOF {
 		fmt.Fprintln(out, "Server closed, retrying")
 		return true
 	} else if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Fprintf(out, "Logged in as %s\n\n", me.name)
+	fmt.Fprintf(out, "Logged in as %s\n\n", me.creds.name)
 
-	err = handleClientMessagesLoop(userInput, out, serverConn)
+	err = me.handleClientMessagesLoop()
 	switch err {
 	case nil:
 		panic("unreachable, mainClientLoop should return only on error")
@@ -59,9 +78,10 @@ func runClientUntilDisconnected(port string, in io.Reader, out io.Writer) (shoul
 }
 
 var ErrClientHasQuitExtinguished = errors.New("client has quit")
-func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn net.Conn) (*UserCredentials, error) {
+
+func authenticateWithRetry(client *UnauthenticatedClient) (*AuthenticatedClient, error) {
 	for {
-		me, action, err := promptForAuthTypeAndUser(userInput, out)
+		creds, action, err := promptForAuthTypeAndUser(client.userInput, client.userOutput)
 		if err == ErrClientHasQuit {
 			return nil, ErrClientHasQuitExtinguished
 		}
@@ -69,9 +89,11 @@ func authenticateWithRetry(userInput *bufio.Scanner, out io.Writer, serverConn n
 			return nil, err
 		}
 
-		err = authenticateWithServer(out, me, action, serverConn)
+		me, err := client.authenticateWithServer(creds, action)
 		if err != ErrInvalidAuth {
 			return me, err
+		} else {
+			continue
 		}
 	}
 }
@@ -103,12 +125,10 @@ func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 	}
 }
 
-func handleClientMessagesLoop(userInputScanner *bufio.Scanner, out io.Writer, serverConn net.Conn) error {
-	serverOutput := readAsyncIntoChan(bufio.NewScanner(serverConn))
-	userInput := readAsyncIntoChan(userInputScanner)
+func (client *AuthenticatedClient) handleClientMessagesLoop() error {
 	for {
 		select {
-		case msg := <-serverOutput:
+		case msg := <-client.serverOutput:
 			if msg.err != nil {
 				return msg.err
 			}
@@ -118,19 +138,19 @@ func handleClientMessagesLoop(userInputScanner *bufio.Scanner, out io.Writer, se
 					return ErrServerLoggedUsOut
 				}
 			} else { // normal message
-				fmt.Fprintln(out, msg.val)
+				fmt.Fprintln(client.userOutput, msg.val)
 			}
-		case line := <-userInput:
-			if line.err == ErrClientHasQuit{
+		case line := <-client.userInput:
+			if line.err == ErrClientHasQuit {
 				return ErrClientHasQuitExtinguished
 			}
 			if line.err != nil {
 				return line.err
 			}
-			if err := sendMsgWithTimeout(line.val, serverConn); err != nil {
+			if err := client.sendMsgWithTimeout(line.val); err != nil {
 				return err
 			}
-			if err := expectResponseWithTimeout(serverOutput, ResponseOk); err != nil {
+			if err := expectResponseWithTimeout(client.serverOutput, ResponseOk); err != nil {
 				return err
 			}
 		}
@@ -149,10 +169,16 @@ func runClientCommand(cmd UserCommand) error {
 	}
 }
 
-func sendMsgWithTimeout(msg string, serverConn net.Conn) error {
-	serverConn.SetWriteDeadline(time.Now().Add(MsgSendTimeout))
-	_, err := serverConn.Write([]byte(msg + "\n"))
-	serverConn.SetWriteDeadline(time.Time{})
+var ErrInvalidCast = errors.New("couldn't cast")
+
+func (client *AuthenticatedClient) sendMsgWithTimeout(msg string) error {
+	conn, ok := client.serverInput.(net.Conn)
+	if !ok {
+		return ErrInvalidCast
+	}
+	conn.SetWriteDeadline(time.Now().Add(MsgSendTimeout))
+	_, err := conn.Write([]byte(msg + "\n"))
+	conn.SetWriteDeadline(time.Time{})
 	return err
 }
 
@@ -173,7 +199,7 @@ func expectResponseWithTimeout(serverOutput <-chan ReadOutput, r Response) error
 	}
 }
 
-func promptForAuthTypeAndUser(userInput *bufio.Scanner, out io.Writer) (*UserCredentials, AuthAction, error) {
+func promptForAuthTypeAndUser(userInput <-chan ReadOutput, out io.Writer) (*UserCredentials, AuthAction, error) {
 	action, err := ChooseLoginOrRegister(userInput, out)
 	if err != nil {
 		return nil, action, err
@@ -185,31 +211,31 @@ func promptForAuthTypeAndUser(userInput *bufio.Scanner, out io.Writer) (*UserCre
 
 var ErrInvalidAuth = errors.New("username exists and such")
 
-func authenticateWithServer(out io.Writer, creds *UserCredentials, action AuthAction,
-	serverConn io.ReadWriter) error {
-	err, response := authenticate(action, creds, serverConn)
+func (client *UnauthenticatedClient) authenticateWithServer(creds *UserCredentials, action AuthAction) (*AuthenticatedClient, error) {
+	err, response := client.authenticate(action, creds)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if response != ResponseOk {
-		fmt.Fprintln(out, response)
-		return ErrInvalidAuth
+		fmt.Fprintln(client.userOutput, response)
+		return nil, ErrInvalidAuth
 	}
-	return nil
+	me := &AuthenticatedClient{*client, creds}
+	return me, nil
 }
 
-func ChooseLoginOrRegister(userInput *bufio.Scanner, out io.Writer) (AuthAction, error) {
+func ChooseLoginOrRegister(userInput <-chan ReadOutput, out io.Writer) (AuthAction, error) {
 	for {
 		fmt.Fprintln(out, "Type r to register, l to login")
 
-		c, err := scanLine(userInput)
-		if err != nil {
-			return ActionIOErr, err
+		answer := <-userInput
+		if answer.err != nil {
+			return ActionIOErr, answer.err
 		}
-		a := AuthAction(c)
-		switch a {
+		action := AuthAction(answer.val)
+		switch action {
 		case ActionLogin, ActionRegister:
-			return a, nil
+			return action, nil
 		default:
 			continue
 		}
@@ -218,33 +244,33 @@ func ChooseLoginOrRegister(userInput *bufio.Scanner, out io.Writer) (AuthAction,
 
 var ErrEmptyUsernameOrPassword = errors.New("empty username or password")
 
-func promptForUsernameAndPassword(userInput *bufio.Scanner, out io.Writer) (*UserCredentials, error) {
+func promptForUsernameAndPassword(userInput <-chan ReadOutput, out io.Writer) (*UserCredentials, error) {
 	fmt.Fprintf(out, "Username:\n")
 
-	username, err := scanLine(userInput)
-	if err != nil {
-		return nil, err
+	username := <-userInput
+	if username.err != nil {
+		return nil, username.err
 	}
-	if username == "" {
+	if username.val == "" {
 		return nil, ErrEmptyUsernameOrPassword
 	}
 
 	fmt.Fprintf(out, "Password:\n")
-	password, err := scanLine(userInput)
-	if err != nil {
-		return nil, err
+	password := <-userInput
+	if password.err != nil {
+		return nil, password.err
 	}
-	if password == "" {
+	if password.val == "" {
 		return nil, ErrEmptyUsernameOrPassword
 	}
-	return &UserCredentials{username, password}, nil
+	return &UserCredentials{username.val, password.val}, nil
 }
 
 var ErrOddOutput = errors.New("unexpected output from server")
 var ResponseUnknown Response = "unexpected output from server"
 
-func authenticate(action AuthAction, creds *UserCredentials, serverConn io.ReadWriter) (error, Response) {
-	_, err := serverConn.Write([]byte(
+func (client *UnauthenticatedClient) authenticate(action AuthAction, creds *UserCredentials) (error, Response) {
+	_, err := client.serverInput.Write([]byte(
 		string(action) + "\n" +
 			creds.name + "\n" +
 			creds.password + "\n"))
@@ -252,14 +278,13 @@ func authenticate(action AuthAction, creds *UserCredentials, serverConn io.ReadW
 		return err, ResponseIoErrorOccurred
 	}
 
-	serverOutput := bufio.NewScanner(serverConn)
-	status, err := scanLine(serverOutput)
+	status := <-client.serverOutput
 
-	if err != nil {
+	if status.err != nil {
 		return err, ResponseIoErrorOccurred
 	}
 
-	response := Response(status)
+	response := Response(status.val)
 	if response == ResponseOk ||
 		response == ResponseUserAlreadyOnline ||
 		response == ResponseUsernameExists ||
