@@ -14,11 +14,11 @@ type UserCredentials struct {
 	password string
 }
 type Client struct {
-	receiveMsg <-chan ChatMessage
-	sendMsg    chan<- ChatMessage
-	creds      *UserCredentials
-	conn       net.Conn
-	hub        *Hub
+	pendingMsgs <-chan ChatMessage
+	sendMsg     chan<- ChatMessage
+	creds       *UserCredentials
+	conn        net.Conn
+	hub         *Hub
 }
 
 type AuthAction string
@@ -151,7 +151,7 @@ func (client *Client) handleMessagesLoop() error {
 			if err != nil {
 				return err
 			}
-		case msg := <-client.receiveMsg:
+		case msg := <-client.pendingMsgs:
 			err := client.passMessageToUser(msg)
 			msg.Ack()
 			if err != nil {
