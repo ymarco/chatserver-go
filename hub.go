@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -134,24 +133,27 @@ func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, us
 	if totalToSendTo == 0 {
 		return ResponseOk
 	}
-
-	var succeeded int64 = 0
+	errors := make(chan error, totalToSendTo)
 	ctx, cancel := context.WithTimeout(context.Background(), MsgSendTimeout)
-	defer cancel() // useless since we ourselves wait on <-Done(), but there's
-	// an error otherwise
+	defer cancel()
+
 	for _, client := range users {
 		if *client.creds == *sender {
 			continue
 		}
 		go func(client *Client) {
-			sendMessageToClient(client, contents, sender, ctx)
-			atomic.AddInt64(&succeeded, 1)
+			errors <- sendMessageToClient(client, contents, sender, ctx)
 		}(client)
 	}
-	<-ctx.Done()
+	succeeded := 0
+	for i := 0; i < totalToSendTo; i++ {
+		if err := <-errors; err != nil {
+			succeeded++
+		}
+	}
 	if succeeded == 0 {
 		return ResponseMsgFailedForAll
-	} else if succeeded < int64(totalToSendTo) {
+	} else if succeeded < totalToSendTo {
 		return ResponseMsgFailedForSome
 	} else {
 		return ResponseOk
@@ -163,14 +165,16 @@ var ErrSendingTimedOut = errors.New("couldn't forward message to client: timed o
 const MsgSendTimeout = time.Millisecond * 200
 
 func sendMessageToClient(client *Client, msgContent string,
-	sender *UserCredentials, ctx context.Context) {
+	sender *UserCredentials, ctx context.Context) error {
 	msg := NewChatMessage(sender, msgContent)
 	select {
 	case <-ctx.Done():
+		return ctx.Err()
 	case client.sendMsg <- msg:
 		select {
 		case <-msg.ack:
 		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
