@@ -188,7 +188,7 @@ func sendMessageToClient(client *Client, content string,
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case client.sendMsg <- msg:
+	case client.SendMsg <- msg:
 		select {
 		case <-msg.ack:
 			return nil

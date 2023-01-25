@@ -15,7 +15,7 @@ type UserCredentials struct {
 }
 type Client struct {
 	pendingMsgs <-chan ChatMessage
-	sendMsg     chan<- ChatMessage
+	SendMsg     chan<- ChatMessage
 	errs        chan error
 	Creds       *UserCredentials
 	conn        net.Conn
@@ -91,7 +91,7 @@ func (hub *Hub) newClient(r *AuthRequest) *Client {
 	return &Client{receiveMsg, sendMsg, errs, r.creds, r.conn, hub}
 }
 func (client *Client) Close() error {
-	close(client.sendMsg)
+	close(client.SendMsg)
 	return client.conn.Close()
 }
 
