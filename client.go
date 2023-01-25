@@ -240,18 +240,18 @@ func (client *AuthenticatedClient) handleClientMessagesLoop() error {
 			if line.err != nil {
 				return line.err
 			}
-			go func() {
-				id := getUniqueID()
-				err := client.sendMsgWithTimeout(id, line.val)
-				if err != nil {
-					client.errs <- err
-					return
-				}
-				client.expectResponseForIdWithTimeout(id, ResponseOk)
-			}()
-
+			go client.sendMsgExpectResponseTimeout(line.val)
 		}
 	}
+}
+func (client *AuthenticatedClient) sendMsgExpectResponseTimeout(msgContent string) {
+	id := getUniqueID()
+	err := client.sendMsgWithTimeout(id, msgContent)
+	if err != nil {
+		client.errs <- err
+		return
+	}
+	client.expectResponseForIdWithTimeout(id, ResponseOk)
 }
 
 var globalID int64 = 0
