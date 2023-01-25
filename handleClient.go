@@ -119,7 +119,7 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {
 			return nil, err
 		}
 
-		response, client := hub.tryToAuthenticate(request)
+		response, client := hub.TryToAuthenticate(request)
 		if response == ResponseOk {
 			return client, client.forwardResponse(ID(""), ResponseOk)
 		}

@@ -51,7 +51,7 @@ func NewHub() *Hub {
 	}
 }
 
-func (hub *Hub) tryToAuthenticate(request *AuthRequest) (Response, *Client) {
+func (hub *Hub) TryToAuthenticate(request *AuthRequest) (Response, *Client) {
 	response := hub.testAuth(request)
 	if response == ResponseOk {
 		return response, hub.logClientIn(request)
