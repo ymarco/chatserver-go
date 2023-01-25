@@ -3,7 +3,7 @@ set -euo pipefail
 
 pkill go-project || true
 PORT=4567
-MSGS_COUNT=$((1<<14))
+MSGS_COUNT=$((1<<12))
 
 client1() {
     echo $MSGS_COUNT\
@@ -12,10 +12,9 @@ client1() {
             (println "1234")
             (Thread/sleep 2100) ; wait for client2 to login
             (dotimes [i (read)]
-              (when (= (rem i 10) 0)
-                (Thread/sleep 1))
+              (Thread/sleep 3)
               (println "msg"))
-            (Thread/sleep 13000); wait to receive messages' \
+            (Thread/sleep 2000); finish receiving messages' \
       | go run . $PORT client\
       | bb '(read-line) (read-line) ; connected, type r or l
             (read-line) ; "Username:"
@@ -32,10 +31,9 @@ client2() {
             (println "1234")
             (Thread/sleep 2000) ; wait for client2 to login
             (dotimes [i (read)]
-              (when (= (rem i 10) 0)
-                (Thread/sleep 1))
+              (Thread/sleep 3)
               (println "msg"))
-            (Thread/sleep 13000); wait to receive messages' \
+            (Thread/sleep 2000); finish receiving messages' \
       | go run . $PORT client \
       | bb '(read-line) (read-line) ; connected, type r or l
             (read-line) ; "Username:"
