@@ -95,7 +95,7 @@ func (client *Client) Close() error {
 	return client.conn.Close()
 }
 
-func (hub *Hub) handleNewConnection(conn net.Conn) {
+func (hub *Hub) HandleNewConnection(conn net.Conn) {
 	defer log.Printf("Disconnected: %s\n", conn.RemoteAddr())
 	client, err := acceptAuthRetry(conn, hub)
 	if err == ErrClientHasQuit {

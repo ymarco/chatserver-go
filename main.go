@@ -50,6 +50,6 @@ func server(port string) {
 			log.Fatalln(err)
 		}
 		log.Printf("Connected: %s\n", conn.RemoteAddr())
-		go hub.handleNewConnection(conn)
+		go hub.HandleNewConnection(conn)
 	}
 }
