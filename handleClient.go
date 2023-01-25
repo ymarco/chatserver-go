@@ -205,7 +205,7 @@ func (client *Client) dispatchUserInput(input string) error {
 			}
 			return client.runUserCommand(cmd)
 		} else {
-			response := client.hub.broadcastMessageWait(msg, client.Creds)
+			response := client.hub.BroadcastMessageWait(msg, client.Creds)
 			return client.forwardResponse(id, response)
 		}
 	} else {

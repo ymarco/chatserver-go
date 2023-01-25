@@ -135,7 +135,7 @@ func copyHashMap(m map[UserCredentials]*Client) map[UserCredentials]*Client {
 	return res
 }
 
-func (hub *Hub) broadcastMessageWait(content string, sender *UserCredentials) Response {
+func (hub *Hub) BroadcastMessageWait(content string, sender *UserCredentials) Response {
 	hub.activeUsersLock.RLock()
 	cp := copyHashMap(hub.activeUsers)
 	hub.activeUsersLock.RUnlock()
