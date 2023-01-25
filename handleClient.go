@@ -17,7 +17,7 @@ type Client struct {
 	pendingMsgs <-chan ChatMessage
 	sendMsg     chan<- ChatMessage
 	errs        chan error
-	creds       *UserCredentials
+	Creds       *UserCredentials
 	conn        net.Conn
 	hub         *Hub
 }
@@ -101,10 +101,10 @@ func (hub *Hub) handleNewConnection(conn net.Conn) {
 	if err == ErrClientHasQuit {
 		return
 	} else if err != nil {
-		log.Printf("Err with %s: %s", client.creds.name, err)
+		log.Printf("Err with %s: %s", client.Creds.name, err)
 		return
 	}
-	defer hub.Logout(client.creds)
+	defer hub.Logout(client.Creds)
 
 	err = client.handleMessagesLoop()
 	if err != ErrClientHasQuit {
@@ -127,7 +127,7 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {
 		// try to communicate that we're retrying
 		err = forwardResponse(clientConn, ID(""), response)
 		if err != nil {
-			log.Printf("Error with %s: %s\n", client.creds.name, err)
+			log.Printf("Error with %s: %s\n", client.Creds.name, err)
 			return nil, err
 		}
 	}
@@ -205,7 +205,7 @@ func (client *Client) dispatchUserInput(input string) error {
 			}
 			return client.runUserCommand(cmd)
 		} else {
-			response := client.hub.broadcastMessageWait(msg, client.creds)
+			response := client.hub.broadcastMessageWait(msg, client.Creds)
 			return client.forwardResponse(id, response)
 		}
 	} else {
@@ -220,7 +220,7 @@ const (
 func (client *Client) runUserCommand(cmd Cmd) error {
 	switch cmd {
 	case LogoutCmd:
-		client.hub.Logout(client.creds)
+		client.hub.Logout(client.Creds)
 		return client.forwardCmd(LogoutCmd)
 	default:
 		msg := NewChatMessage(&UserCredentials{name: "server"}, "Invalid command")

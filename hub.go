@@ -91,9 +91,9 @@ func (hub *Hub) logClientIn(request *AuthRequest) *Client {
 	defer hub.userDBLock.Unlock()
 
 	client := hub.newClient(request)
-	hub.userDB[client.creds.name] = client.creds.password
-	hub.activeUsers[*client.creds] = client
-	log.Printf("Logged in: %s\n", client.creds.name)
+	hub.userDB[client.Creds.name] = client.Creds.password
+	hub.activeUsers[*client.Creds] = client
+	log.Printf("Logged in: %s\n", client.Creds.name)
 	return client
 }
 func (hub *Hub) Logout(creds *UserCredentials) {
@@ -153,7 +153,7 @@ func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, us
 	defer cancel()
 
 	for _, client := range users {
-		if *client.creds == *sender {
+		if *client.Creds == *sender {
 			continue
 		}
 		go func(client *Client) {
