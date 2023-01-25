@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+pkill go-project || true
 PORT=4567
 MSGS_COUNT=$((1<<14))
 
