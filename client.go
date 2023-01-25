@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -27,7 +28,6 @@ func toCmd(s string) Cmd {
 }
 
 func client(port string, in io.Reader, out io.Writer) {
-	go generateIDs()
 	userInput := readAsyncIntoChan(bufio.NewScanner(in))
 
 	shouldRetry := true
@@ -55,21 +55,6 @@ type UnauthenticatedClient struct {
 
 	userInput  <-chan ReadOutput
 	userOutput io.Writer
-}
-
-var getUniqueID = make(chan ID)
-
-func intToID(x int) ID {
-	return ID(strconv.Itoa(x))
-}
-
-
-func generateIDs() {
-	i := 0
-	for {
-		getUniqueID <- intToID(i)
-		i++
-	}
 }
 
 type AuthenticatedClient struct {
@@ -256,17 +241,24 @@ func (client *AuthenticatedClient) handleClientMessagesLoop() error {
 				return line.err
 			}
 			go func() {
-				id := <-getUniqueID
-				go client.expectResponseForIdWithTimeout(id, ResponseOk)
+				id := getUniqueID()
 				err := client.sendMsgWithTimeout(id, line.val)
 				if err != nil {
 					client.errs <- err
 					return
 				}
+				client.expectResponseForIdWithTimeout(id, ResponseOk)
 			}()
 
 		}
 	}
+}
+
+var globalID int64 = 0
+
+func getUniqueID() ID {
+	new := atomic.AddInt64(&globalID, 1)
+	return ID(strconv.FormatInt(new, 10))
 }
 
 var ErrMsgWasntAcked = errors.New("didn't get an ack for msg")
