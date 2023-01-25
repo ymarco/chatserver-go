@@ -16,6 +16,7 @@ type UserCredentials struct {
 type Client struct {
 	pendingMsgs <-chan ChatMessage
 	sendMsg     chan<- ChatMessage
+	errs        chan error
 	creds       *UserCredentials
 	conn        net.Conn
 	hub         *Hub
@@ -48,8 +49,9 @@ func strToAuthAction(str string) (AuthAction, error) {
 	}
 }
 
+// scanLine is a wrapper around Scanner.Scan() to return EOF as errors instead
+// of bools
 func scanLine(s *bufio.Scanner) (string, error) {
-	// a wrapper around Scanner.Scan() to return EOF as errors instead of bools
 	if !s.Scan() {
 		if s.Err() == nil {
 			return "", io.EOF
@@ -85,7 +87,8 @@ func acceptAuthRequest(clientConn net.Conn) (*AuthRequest, error) {
 }
 func (hub *Hub) newClient(r *AuthRequest) *Client {
 	sendMsg, receiveMsg := NewMessagePipe()
-	return &Client{receiveMsg, sendMsg, r.creds, r.conn, hub}
+	errs := make(chan error, 128)
+	return &Client{receiveMsg, sendMsg, errs, r.creds, r.conn, hub}
 }
 func (client *Client) Close() error {
 	close(client.sendMsg)
@@ -118,11 +121,11 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {
 
 		response, client := hub.tryToAuthenticate(request)
 		if response == ResponseOk {
-			return client, client.passResponseToUser(ResponseOk)
+			return client, client.forwardResponse(ID(""), ResponseOk)
 		}
 
 		// try to communicate that we're retrying
-		err = passResponseToUser(clientConn, response)
+		err = forwardResponse(clientConn, ID(""), response)
 		if err != nil {
 			log.Printf("Error with %s: %s\n", client.creds.name, err)
 			return nil, err
@@ -130,12 +133,15 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {
 	}
 }
 
-func passResponseToUser(conn net.Conn, r Response) error {
-	_, err := conn.Write([]byte(string(r) + "\n"))
+const serverResponsePrefix = "r"
+
+func forwardResponse(conn net.Conn, id ID, r Response) error {
+	_, err := conn.Write([]byte(serverResponsePrefix + string(id) +
+		idSeparator + string(r) + "\n"))
 	return err
 }
-func (client *Client) passResponseToUser(r Response) error {
-	return passResponseToUser(client.conn, r)
+func (client *Client) forwardResponse(id ID, r Response) error {
+	return forwardResponse(client.conn, id, r)
 }
 
 func (client *Client) handleMessagesLoop() error {
@@ -147,59 +153,94 @@ func (client *Client) handleMessagesLoop() error {
 			if input.err != nil {
 				return input.err
 			}
-			err := client.dispatchUserInput(input.val)
-			if err != nil {
-				return err
-			}
+			go func() {
+				err := client.dispatchUserInput(input.val)
+				if err != nil {
+					client.errs <- err
+					return
+				}
+			}()
+		case err := <-client.errs:
+			return err
 		case msg := <-client.pendingMsgs:
-			err := client.passMessageToUser(msg)
-			msg.Ack()
-			if err != nil {
-				return err
-			}
+			go func() {
+				err := client.forwardMsg(msg)
+				msg.Ack()
+				if err != nil {
+					client.errs <- err
+					return
+				}
+			}()
 		}
 	}
 }
+
+type ID string
 
 func isCommand(s string) bool {
-	return strings.HasPrefix(s, "/")
-}
-func (client *Client) dispatchUserInput(input string) error {
-	if isCommand(input) {
-		err := client.passResponseToUser(ResponseOk)
-		if err != nil {
-			return err
-		}
-		return client.runUserCommand(input)
-	} else {
-		response := client.hub.broadcastMessageWait(input, client.creds)
-		return client.passResponseToUser(response)
-	}
+	return strings.HasPrefix(s, cmdPrefix)
 }
 
-type UserCommand string
+func parseInputMsg(input string) (id ID, msg string, ok bool) {
+	if !strings.HasPrefix(input, msgPrefix) {
+		return "", "", false
+	}
+	input = input[len(msgPrefix):]
+	parts := strings.Split(input, idSeparator)
+	if len(parts) < 2 {
+		return "", "", false
+	}
+	id = ID(parts[0])
+	msg = input[len(id)+len(idSeparator):]
+	return id, msg, true
+}
+
+func (client *Client) dispatchUserInput(input string) error {
+	if id, msg, ok := parseInputMsg(input); ok {
+		if isCommand(msg) {
+			cmd := toCmd(msg)
+			err := client.forwardResponse(id, ResponseOk)
+			if err != nil {
+				return err
+			}
+			return client.runUserCommand(cmd)
+		} else {
+			response := client.hub.broadcastMessageWait(msg, client.creds)
+			return client.forwardResponse(id, response)
+		}
+	} else {
+		return ErrOddOutput
+	}
+}
 
 const (
-	LogoutCmd UserCommand = "/quit"
+	LogoutCmd Cmd = "quit"
 )
 
-func (client *Client) runUserCommand(cmd string) error {
+func (client *Client) runUserCommand(cmd Cmd) error {
 	switch cmd {
-	case string(LogoutCmd):
+	case LogoutCmd:
 		client.hub.Logout(client.creds)
-		return client.passCommandToUser(LogoutCmd)
+		return client.forwardCmd(LogoutCmd)
 	default:
 		msg := NewChatMessage(&UserCredentials{name: "server"}, "Invalid command")
-		return client.passMessageToUser(msg)
+		return client.forwardMsg(msg)
 	}
 }
 
-func (client *Client) passMessageToUser(msg ChatMessage) error {
-	_, err := client.conn.Write([]byte(msg.sender.name + ": " + msg.content + "\n"))
+const msgPrefix = "m"
+const idSeparator = ";"
+
+func (client *Client) forwardMsg(msg ChatMessage) error {
+	_, err := client.conn.Write([]byte(msgPrefix + msg.sender.name + ": " +
+		string(msg.content) + "\n"))
 	return err
 }
-func (client *Client) passCommandToUser(cmd UserCommand) error {
-	_, err := client.conn.Write([]byte(string(cmd) + "\n"))
+
+const cmdPrefix = "/"
+
+func (client *Client) forwardCmd(cmd Cmd) error {
+	_, err := client.conn.Write([]byte(cmdPrefix + string(cmd) + "\n"))
 	return err
 }
 

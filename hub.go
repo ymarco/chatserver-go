@@ -4,22 +4,37 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
 
 type Response string
 
-const (
-	ResponseOk                 Response = "Ok"
-	ResponseUserAlreadyOnline  Response = "User already online"
-	ResponseUsernameExists     Response = "Username already exists"
-	ResponseInvalidCredentials Response = "Wrong username or password"
-	ResponseMsgFailedForSome   Response = "Message failed to send to some users"
-	ResponseMsgFailedForAll    Response = "Message failed to send to any users"
+var (
+	ResponseOk                 = Response("Ok")
+	ResponseUserAlreadyOnline  = Response("User already online")
+	ResponseUsernameExists     = Response("Username already exists")
+	ResponseInvalidCredentials = Response("Wrong username or password")
+	ResponseMsgFailedForSome   = Response("Message failed to send to some users")
+	ResponseMsgFailedForAll    = Response("Message failed to send to any users")
 	// ResponseIoErrorOccurred should be returned along with a normal error type
-	ResponseIoErrorOccurred Response = "IO error, couldn't get a response"
+	ResponseIoErrorOccurred = Response("IO error, couldn't get a response")
 )
+
+func parseServerResponse(s string) (ServerResponse, bool) {
+	if !strings.HasPrefix(s, serverResponsePrefix) {
+		return ServerResponse{}, false
+	}
+	s = s[len(serverResponsePrefix):]
+	parts := strings.Split(s, idSeparator)
+	if len(parts) < 2 {
+		return ServerResponse{}, false
+	}
+	id := ID(parts[0])
+	response := Response(s[len(id)+len(idSeparator):])
+	return ServerResponse{response, id}, true
+}
 
 type Hub struct {
 	activeUsers     map[UserCredentials]*Client
@@ -148,6 +163,8 @@ func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, us
 	succeeded := 0
 	for i := 0; i < totalToSendTo; i++ {
 		if err := <-errors; err != nil {
+			log.Printf("Error sending msg: %s\n", err)
+		} else {
 			succeeded++
 		}
 	}
@@ -163,16 +180,18 @@ func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, us
 var ErrSendingTimedOut = errors.New("couldn't forward message to client: timed out")
 
 const MsgSendTimeout = time.Millisecond * 200
+const MsgAckTimeout = time.Millisecond * 300
 
-func sendMessageToClient(client *Client, msgContent string,
+func sendMessageToClient(client *Client, content string,
 	sender *UserCredentials, ctx context.Context) error {
-	msg := NewChatMessage(sender, msgContent)
+	msg := NewChatMessage(sender, content)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case client.sendMsg <- msg:
 		select {
 		case <-msg.ack:
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
