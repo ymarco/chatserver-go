@@ -28,7 +28,7 @@ func RunServer(port string) {
 }
 
 type Hub struct {
-	activeUsers     map[UserCredentials]*Client
+	activeUsers     map[UserCredentials]*ClientHandler
 	activeUsersLock sync.RWMutex
 
 	userDB     map[string]string
@@ -37,12 +37,12 @@ type Hub struct {
 
 func NewHub() *Hub {
 	return &Hub{
-		activeUsers: make(map[UserCredentials]*Client),
+		activeUsers: make(map[UserCredentials]*ClientHandler),
 		userDB:      make(map[string]string),
 	}
 }
 
-func (hub *Hub) TryToAuthenticate(request *AuthRequest) (Response, *Client) {
+func (hub *Hub) TryToAuthenticate(request *AuthRequest) (Response, *ClientHandler) {
 	response := hub.testAuth(request)
 	if response == ResponseOk {
 		return response, hub.logClientIn(request)
@@ -74,7 +74,7 @@ func (hub *Hub) testAuth(request *AuthRequest) Response {
 		panic("unreachable")
 	}
 }
-func (hub *Hub) logClientIn(request *AuthRequest) *Client {
+func (hub *Hub) logClientIn(request *AuthRequest) *ClientHandler {
 	hub.activeUsersLock.Lock()
 	defer hub.activeUsersLock.Unlock()
 
@@ -118,8 +118,8 @@ func NewMessagePipe() (send chan<- ChatMessage, receive <-chan ChatMessage) {
 	return res, res
 }
 
-func copyHashMap(m map[UserCredentials]*Client) map[UserCredentials]*Client {
-	res := make(map[UserCredentials]*Client)
+func copyHashMap(m map[UserCredentials]*ClientHandler) map[UserCredentials]*ClientHandler {
+	res := make(map[UserCredentials]*ClientHandler)
 	for a, b := range m {
 		res[a] = b
 	}
@@ -134,12 +134,12 @@ func (hub *Hub) BroadcastMessageWait(content string, sender *UserCredentials) Re
 	return sendMsgToAllClientsWithTimeout(content, sender, cp)
 }
 
-func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, users map[UserCredentials]*Client) Response {
+func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, users map[UserCredentials]*ClientHandler) Response {
 	totalToSendTo := len(users) - 1
 	if totalToSendTo == 0 {
 		return ResponseOk
 	}
-	errors := make(chan error, totalToSendTo)
+	errs := make(chan error, totalToSendTo)
 	ctx, cancel := context.WithTimeout(context.Background(), MsgSendTimeout)
 	defer cancel()
 
@@ -147,13 +147,13 @@ func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, us
 		if *client.Creds == *sender {
 			continue
 		}
-		go func(client *Client) {
-			errors <- sendMessageToClient(client, contents, sender, ctx)
+		go func(client *ClientHandler) {
+			errs <- sendMessageToClient(client, contents, sender, ctx)
 		}(client)
 	}
 	succeeded := 0
 	for i := 0; i < totalToSendTo; i++ {
-		if err := <-errors; err != nil {
+		if err := <-errs; err != nil {
 			log.Printf("Error sending msg: %s\n", err)
 		} else {
 			succeeded++
@@ -170,7 +170,7 @@ func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, us
 
 var ErrSendingTimedOut = errors.New("couldn't forward message to client: timed out")
 
-func sendMessageToClient(client *Client, content string,
+func sendMessageToClient(client *ClientHandler, content string,
 	sender *UserCredentials, ctx context.Context) error {
 	msg := NewChatMessage(sender, content)
 	select {
