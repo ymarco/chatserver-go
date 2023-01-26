@@ -5,9 +5,7 @@ import (
 	"errors"
 	"log"
 	"net"
-	"strings"
 	"sync"
-	"time"
 	. "util"
 )
 
@@ -27,20 +25,6 @@ func RunServer(port string) {
 		log.Printf("Connected: %s\n", conn.RemoteAddr())
 		go hub.HandleNewConnection(conn)
 	}
-}
-
-func ParseServerResponse(s string) (ServerResponse, bool) {
-	if !strings.HasPrefix(s, serverResponsePrefix) {
-		return ServerResponse{}, false
-	}
-	s = s[len(serverResponsePrefix):]
-	parts := strings.Split(s, IdSeparator)
-	if len(parts) < 2 {
-		return ServerResponse{}, false
-	}
-	id := ID(parts[0])
-	response := Response(s[len(id)+len(IdSeparator):])
-	return ServerResponse{Response: response, Id: id}, true
 }
 
 type Hub struct {
@@ -185,9 +169,6 @@ func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, us
 }
 
 var ErrSendingTimedOut = errors.New("couldn't forward message to client: timed out")
-
-const MsgSendTimeout = time.Millisecond * 200
-const MsgAckTimeout = time.Millisecond * 300
 
 func sendMessageToClient(client *Client, content string,
 	sender *UserCredentials, ctx context.Context) error {

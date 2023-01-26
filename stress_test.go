@@ -20,8 +20,8 @@ func TestStress(t *testing.T) {
 	// client1.peek(t)
 	client2 := NewClientRun(port)
 	defer client2.Close()
-	client1.RegisterWait(&server.UserCredentials{Name: "yoav", Password: "1234"}, t)
-	client2.RegisterWait(&server.UserCredentials{Name: "bob", Password: "0987"}, t)
+	client1.RegisterWait(&UserCredentials{Name: "yoav", Password: "1234"}, t)
+	client2.RegisterWait(&UserCredentials{Name: "bob", Password: "0987"}, t)
 
 	// nMessages := 2 << 14
 	// go spamMessages(client1.input, nMessages, t)
@@ -32,7 +32,7 @@ func TestStress(t *testing.T) {
 }
 
 type ClientRoutineController struct {
-	user   *server.UserCredentials
+	user   *UserCredentials
 	input  *io.PipeWriter
 	output *io.PipeReader
 }
@@ -52,11 +52,11 @@ func (client *ClientRoutineController) peek(t *testing.T) {
 
 	go func() {
 		s := bufio.NewScanner(newStdin)
-		i, err := server.ScanLine(s)
+		i, err := ScanLine(s)
 		for err != nil {
 			t.Logf("%s received: %s", client.user, i)
 			originalIn.Write([]byte(i))
-			i, err = server.ScanLine(s)
+			i, err = ScanLine(s)
 		}
 	}()
 
@@ -66,11 +66,11 @@ func (client *ClientRoutineController) peek(t *testing.T) {
 
 	go func() {
 		s := bufio.NewScanner(originalOut)
-		i, err := server.ScanLine(s)
+		i, err := ScanLine(s)
 		for err != nil {
 			t.Logf("%s printed: %s", client.user, i)
 			newStdout.Write([]byte(i))
-			i, err = server.ScanLine(s)
+			i, err = ScanLine(s)
 		}
 	}()
 }
@@ -79,7 +79,7 @@ func (client *ClientRoutineController) Close() {
 	ClosePrintErr(client.output)
 	ClosePrintErr(client.input)
 }
-func (client *ClientRoutineController) RegisterWait(user *server.UserCredentials, t *testing.T) {
+func (client *ClientRoutineController) RegisterWait(user *UserCredentials, t *testing.T) {
 	client.user = user
 	clientOut := bufio.NewScanner(client.output)
 	fmt.Println("skipping line")
@@ -122,7 +122,7 @@ func receiveMessages(clientOut io.Reader, n int, t *testing.T) []string {
 	scanner := bufio.NewScanner(clientOut)
 	res := make([]string, n)
 	for i := 0; i < n; i++ {
-		temp, err := server.ScanLine(scanner)
+		temp, err := ScanLine(scanner)
 		res[i] = temp
 		if err != nil {
 			t.Error(err)
@@ -131,11 +131,11 @@ func receiveMessages(clientOut io.Reader, n int, t *testing.T) []string {
 	return res
 }
 func skipLine(s *bufio.Scanner) error {
-	_, err := server.ScanLine(s)
+	_, err := ScanLine(s)
 	return err
 }
 func expect(clientOut *bufio.Scanner, expected string, t *testing.T) {
-	s, err := server.ScanLine(clientOut)
+	s, err := ScanLine(clientOut)
 	if err != nil {
 		t.Error("expect ", err)
 	}

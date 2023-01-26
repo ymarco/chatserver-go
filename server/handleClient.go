@@ -3,17 +3,12 @@ package server
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"strings"
 	. "util"
 )
 
-type UserCredentials struct {
-	Name     string
-	Password string
-}
 type Client struct {
 	pendingMsgs <-chan ChatMessage
 	SendMsg     chan<- ChatMessage
@@ -23,21 +18,11 @@ type Client struct {
 	hub         *Hub
 }
 
-type AuthAction string
-
-const (
-	ActionLogin    AuthAction = "l"
-	ActionRegister AuthAction = "r"
-	ActionIOErr    AuthAction = ""
-)
-
 type AuthRequest struct {
 	authType AuthAction
 	conn     net.Conn
 	creds    *UserCredentials
 }
-
-var ErrClientHasQuit = io.EOF
 
 func strToAuthAction(str string) (AuthAction, error) {
 	switch action := AuthAction(str); action {
@@ -48,19 +33,6 @@ func strToAuthAction(str string) (AuthAction, error) {
 	default:
 		return ActionIOErr, fmt.Errorf("weird output from clientConn: %s", str)
 	}
-}
-
-// ScanLine is a wrapper around Scanner.Scan() to return EOF as errors instead
-// of bools
-func ScanLine(s *bufio.Scanner) (string, error) {
-	if !s.Scan() {
-		if s.Err() == nil {
-			return "", io.EOF
-		} else {
-			return "", s.Err()
-		}
-	}
-	return s.Text(), nil
 }
 
 func acceptAuthRequest(clientConn net.Conn) (*AuthRequest, error) {
@@ -134,10 +106,8 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {
 	}
 }
 
-const serverResponsePrefix = "r"
-
 func forwardResponseToUser(conn net.Conn, id ID, r Response) error {
-	_, err := conn.Write([]byte(serverResponsePrefix + string(id) +
+	_, err := conn.Write([]byte(ServerResponsePrefix + string(id) +
 		IdSeparator + string(r) + "\n"))
 	return err
 }
@@ -213,10 +183,6 @@ func (client *Client) dispatchUserInput(input string) error {
 	}
 }
 
-const (
-	LogoutCmd Cmd = "quit"
-)
-
 func (client *Client) runUserCommand(cmd Cmd) error {
 	switch cmd {
 	case LogoutCmd:
@@ -227,9 +193,6 @@ func (client *Client) runUserCommand(cmd Cmd) error {
 		return client.forwardMsg(msg)
 	}
 }
-
-const MsgPrefix = "m"
-const IdSeparator = ";"
 
 func (client *Client) forwardMsg(msg ChatMessage) error {
 	_, err := client.conn.Write([]byte(MsgPrefix + msg.sender.Name + ": " +
@@ -242,23 +205,4 @@ const cmdPrefix = "/"
 func (client *Client) forwardCmd(cmd Cmd) error {
 	_, err := client.conn.Write([]byte(cmdPrefix + string(cmd) + "\n"))
 	return err
-}
-
-type ReadOutput struct {
-	Val string
-	Err error
-}
-
-func ReadAsyncIntoChan(scanner *bufio.Scanner) <-chan ReadOutput {
-	outputs := make(chan ReadOutput)
-	go func() {
-		for {
-			s, err := ScanLine(scanner)
-			outputs <- ReadOutput{s, err}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	return outputs
 }
