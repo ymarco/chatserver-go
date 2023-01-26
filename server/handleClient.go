@@ -178,7 +178,7 @@ func (handler *ClientHandler) dispatchUserInput(input string) error {
 			}
 			return handler.runUserCommand(cmd)
 		} else {
-			response := handler.hub.BroadcastMessageWait(msg, handler.Creds)
+			response := handler.hub.BroadcastMessageWithTimeout(msg, handler.Creds)
 			return handler.forwardResponseToUser(id, response)
 		}
 	} else {

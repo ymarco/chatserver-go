@@ -118,39 +118,26 @@ func NewMessagePipe() (send chan<- ChatMessage, receive <-chan ChatMessage) {
 	return res, res
 }
 
-func copyHashMap(m map[UserCredentials]*ClientHandler) map[UserCredentials]*ClientHandler {
-	res := make(map[UserCredentials]*ClientHandler)
-	for a, b := range m {
-		res[a] = b
-	}
-	return res
-}
-
-func (hub *Hub) BroadcastMessageWait(content string, sender *UserCredentials) Response {
+func (hub *Hub) BroadcastMessageWithTimeout(content string, sender *UserCredentials) Response {
 	hub.activeUsersLock.RLock()
-	cp := copyHashMap(hub.activeUsers)
-	hub.activeUsersLock.RUnlock()
-
-	return sendMsgToAllClientsWithTimeout(content, sender, cp)
-}
-
-func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, users map[UserCredentials]*ClientHandler) Response {
-	totalToSendTo := len(users) - 1
+	totalToSendTo := len(hub.activeUsers) - 1
 	if totalToSendTo == 0 {
+		hub.activeUsersLock.RUnlock()
 		return ResponseOk
 	}
 	errs := make(chan error, totalToSendTo)
 	ctx, cancel := context.WithTimeout(context.Background(), MsgSendTimeout)
 	defer cancel()
 
-	for _, client := range users {
+	for _, client := range hub.activeUsers {
 		if *client.Creds == *sender {
 			continue
 		}
 		go func(client *ClientHandler) {
-			errs <- sendMessageToClient(client, contents, sender, ctx)
+			errs <- sendMessageToClient(client, content, sender, ctx)
 		}(client)
 	}
+	hub.activeUsersLock.RUnlock()
 	succeeded := 0
 	// a range on errs would cause a hang here since we don't close the channel
 	for i := 0; i < totalToSendTo; i++ {
