@@ -3,7 +3,7 @@ set -euo pipefail
 
 pkill chatserver || true
 PORT=4567
-MSGS_COUNT=$((1<<12))
+MSGS_COUNT=$((1<<14))
 
 client1() {
     echo $MSGS_COUNT\
@@ -12,9 +12,10 @@ client1() {
             (println "1234")
             (Thread/sleep 2100) ; wait for client2 to login
             (dotimes [i (read)]
-              (Thread/sleep 3)
+              (when (= (rem i 2) 0)
+                (Thread/sleep 1))
               (println "msg"))
-            (Thread/sleep 2000); finish receiving messages' \
+            (Thread/sleep 200); finish receiving messages' \
       | go run . $PORT client\
       | bb '(read-line) (read-line) ; connected, type r or l
             (read-line) ; "Username:"
@@ -31,9 +32,10 @@ client2() {
             (println "1234")
             (Thread/sleep 2000) ; wait for client2 to login
             (dotimes [i (read)]
-              (Thread/sleep 3)
+              (when (= (rem i 2) 0)
+                (Thread/sleep 1))
               (println "msg"))
-            (Thread/sleep 2000); finish receiving messages' \
+            (Thread/sleep 200); finish receiving messages' \
       | go run . $PORT client \
       | bb '(read-line) (read-line) ; connected, type r or l
             (read-line) ; "Username:"
