@@ -81,7 +81,7 @@ func (hub *Hub) logClientIn(request *AuthRequest) *ClientHandler {
 	hub.userDBLock.Lock()
 	defer hub.userDBLock.Unlock()
 
-	client := hub.newClient(request)
+	client := hub.newClientHandler(request)
 	hub.userDB[client.Creds.Name] = client.Creds.Password
 	hub.activeUsers[*client.Creds] = client
 	log.Printf("Logged in: %s\n", client.Creds.Name)
@@ -152,6 +152,7 @@ func sendMsgToAllClientsWithTimeout(contents string, sender *UserCredentials, us
 		}(client)
 	}
 	succeeded := 0
+	// a range on errs would cause a hang here since we don't close the channel
 	for i := 0; i < totalToSendTo; i++ {
 		if err := <-errs; err != nil {
 			log.Printf("Error sending msg: %s\n", err)

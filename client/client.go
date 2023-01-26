@@ -238,7 +238,7 @@ func (client *AuthenticatedClient) sendMsgExpectResponseTimeout(msgContent strin
 		client.errs <- err
 		return
 	}
-	client.expectResponseFromChanWithTimeout(ack, ResponseOk)
+	expectResponseFromChanWithTimeout(id, ack, ResponseOk)
 }
 
 var globalID int64 = 0
@@ -259,11 +259,11 @@ func (client *AuthenticatedClient) insertExpectedResponseId(id ID) <-chan Respon
 	client.pendingAcks[id] = ack
 	return ack
 }
-func (client *AuthenticatedClient) expectResponseFromChanWithTimeout(ack <-chan Response,
-	expected Response) {
+func expectResponseFromChanWithTimeout(id ID, ack <-chan Response, expected Response) {
 	select {
 	case <-time.After(MsgAckTimeout):
-		client.errs <- ErrMsgWasntAcked
+		log.Printf("Msg %s wasn't acked", id)
+		// skip err, i.e don't send it to client.errs
 	case response := <-ack:
 		if response != expected {
 			fmt.Printf("Response was unexpectedly %s\n", response)
@@ -276,7 +276,8 @@ func (client *AuthenticatedClient) runCmd(cmd Cmd) {
 	case LogoutCmd:
 		client.errs <- ErrServerLoggedUsOut
 	default:
-		client.errs <- ErrUnknownCommand
+		log.Printf("Unknown command from server: %s", cmd)
+		// skip err, i.e don't send it to client.errs
 	}
 }
 

@@ -71,9 +71,10 @@ func (handler *ClientHandler) Close() error {
 func (hub *Hub) HandleNewConnection(conn net.Conn) {
 	defer log.Printf("Disconnected: %s\n", conn.RemoteAddr())
 	handler, err := acceptAuthRetry(conn, hub)
-	if err == ErrClientHasQuit {
-		return
-	} else if err != nil {
+	if err != nil {
+		if err == ErrClientHasQuit {
+			return
+		}
 		log.Printf("Err with %s: %s", handler.Creds.Name, err)
 		return
 	}
@@ -124,23 +125,17 @@ func (handler *ClientHandler) handleMessagesLoop() error {
 			if input.Err != nil {
 				return input.Err
 			}
-			go func() {
-				err := handler.dispatchUserInput(input.Val)
-				if err != nil {
-					handler.errs <- err
-					return
-				}
-			}()
+			handler.dispatchUserInputAsync(input.Val)
 		case err := <-handler.errs:
 			return err
 		case msg := <-handler.pendingMsgs:
 			go func() {
-				err := handler.forwardMsg(msg)
-				msg.Ack()
+				err := handler.forwardMsgToUser(msg)
 				if err != nil {
 					handler.errs <- err
 					return
 				}
+				msg.Ack()
 			}()
 		}
 	}
@@ -164,6 +159,15 @@ func parseInputMsg(input string) (id ID, msg string, ok bool) {
 	return id, msg, true
 }
 
+func (handler *ClientHandler) dispatchUserInputAsync(input string) {
+	go func() {
+		err := handler.dispatchUserInput(input)
+		if err != nil {
+			handler.errs <- err
+			return
+		}
+	}()
+}
 func (handler *ClientHandler) dispatchUserInput(input string) error {
 	if id, msg, ok := parseInputMsg(input); ok {
 		if isCommand(msg) {
@@ -189,11 +193,11 @@ func (handler *ClientHandler) runUserCommand(cmd Cmd) error {
 		return handler.forwardCmd(LogoutCmd)
 	default:
 		msg := NewChatMessage(&UserCredentials{Name: "runServer"}, "Invalid command")
-		return handler.forwardMsg(msg)
+		return handler.forwardMsgToUser(msg)
 	}
 }
 
-func (handler *ClientHandler) forwardMsg(msg ChatMessage) error {
+func (handler *ClientHandler) forwardMsgToUser(msg ChatMessage) error {
 	_, err := handler.conn.Write([]byte(MsgPrefix + msg.sender.Name + ": " +
 		msg.content + "\n"))
 	return err
