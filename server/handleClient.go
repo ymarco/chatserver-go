@@ -129,16 +129,20 @@ func (handler *ClientHandler) handleMessagesLoop() error {
 		case err := <-handler.errs:
 			return err
 		case msg := <-handler.pendingMsgs:
-			go func() {
-				err := handler.forwardMsgToUser(msg)
-				if err != nil {
-					handler.errs <- err
-					return
-				}
-				msg.Ack()
-			}()
+			handler.forwardMsgToUserAsync(msg)
 		}
 	}
+}
+
+func (handler *ClientHandler) forwardMsgToUserAsync(msg ChatMessage) {
+	go func() {
+		err := handler.forwardMsgToUser(msg)
+		if err != nil {
+			handler.errs <- err
+			return
+		}
+		msg.Ack()
+	}()
 }
 
 func isCommand(s string) bool {
@@ -190,7 +194,7 @@ func (handler *ClientHandler) runUserCommand(cmd Cmd) error {
 	switch cmd {
 	case LogoutCmd:
 		handler.hub.Logout(handler.Creds)
-		return handler.forwardCmd(LogoutCmd)
+		return handler.forwardCmdToUser(LogoutCmd)
 	default:
 		msg := NewChatMessage(&UserCredentials{Name: "runServer"}, "Invalid command")
 		return handler.forwardMsgToUser(msg)
@@ -205,7 +209,7 @@ func (handler *ClientHandler) forwardMsgToUser(msg ChatMessage) error {
 
 const cmdPrefix = "/"
 
-func (handler *ClientHandler) forwardCmd(cmd Cmd) error {
+func (handler *ClientHandler) forwardCmdToUser(cmd Cmd) error {
 	_, err := handler.conn.Write([]byte(cmdPrefix + string(cmd) + "\n"))
 	return err
 }
