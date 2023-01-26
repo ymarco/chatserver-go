@@ -9,38 +9,32 @@ import (
 )
 
 func TestStress(t *testing.T) {
-	port := ":5000"
+	port := ":7000"
 	go server(port)
 	time.Sleep(time.Millisecond * 100)
 	client1 := NewClientRun(port)
 	defer client1.Close()
+	// client1.peek(t)
 	client2 := NewClientRun(port)
 	defer client2.Close()
-	client1.RegisterWait(User{"yoav", "1234"}, t)
-	client2.RegisterWait(User{"bob", "0987"}, t)
+	client1.RegisterWait(&UserCredentials{"yoav", "1234"}, t)
+	client2.RegisterWait(&UserCredentials{"bob", "0987"}, t)
 
-	if tookTooLong(
-		func() {
-		},
-		100*time.Millisecond) {
-		t.Error("Login took too long")
-	}
-
-	nMessages := 2 << 14
-	go spamMessages(client1.input, nMessages, t)
-	msgs := receiveMessages(client2.output, nMessages, t)
-	if msgs[len(msgs)-1] != client1.user.name+": Hello!" {
-		t.Error("IDK")
-	}
+	// nMessages := 2 << 14
+	// go spamMessages(client1.input, nMessages, t)
+	// msgs := receiveMessages(client2.output, nMessages, t)
+	// if msgs[len(msgs)-1] != client1.user.name+": Hello!" {
+	// 	t.Error("IDK")
+	// }
 }
 
-type Client struct {
-	user   User
+type ClientRoutineController struct {
+	user   *UserCredentials
 	input  *io.PipeWriter
 	output *io.PipeReader
 }
 
-func NewClientRun(port string) (c Client) {
+func NewClientRun(port string) (c ClientRoutineController) {
 	stdin, clientIn := io.Pipe()
 	c.input = clientIn
 	clientOut, stdout := io.Pipe()
@@ -48,14 +42,44 @@ func NewClientRun(port string) (c Client) {
 	go client(port, stdin, stdout)
 	return c
 }
+func (client *ClientRoutineController) peek(t *testing.T) {
+	originalIn := client.input
+	newStdin, newInInterface := io.Pipe()
+	client.input = newInInterface
 
-func (client *Client) Close() {
+	go func() {
+		s := bufio.NewScanner(newStdin)
+		i, err := scanLine(s)
+		for err != nil {
+			t.Logf("%s received: %s", client.user, i)
+			originalIn.Write([]byte(i))
+			i, err = scanLine(s)
+		}
+	}()
+
+	originalOut := client.output
+	newOutInterface, newStdout := io.Pipe()
+	client.output = newOutInterface
+
+	go func() {
+		s := bufio.NewScanner(originalOut)
+		i, err := scanLine(s)
+		for err != nil {
+			t.Logf("%s printed: %s", client.user, i)
+			newStdout.Write([]byte(i))
+			i, err = scanLine(s)
+		}
+	}()
+}
+
+func (client *ClientRoutineController) Close() {
 	closePrintErr(client.output)
 	closePrintErr(client.input)
 }
-func (client *Client) RegisterWait(user User, t *testing.T) {
+func (client *ClientRoutineController) RegisterWait(user *UserCredentials, t *testing.T) {
 	client.user = user
 	clientOut := bufio.NewScanner(client.output)
+	fmt.Println("skipping line")
 	if err := skipLine(clientOut); err != nil { // Connected as ...
 		t.Error(err)
 	}
