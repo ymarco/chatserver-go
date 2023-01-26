@@ -42,7 +42,7 @@ type UnauthenticatedClient struct {
 	userOutput io.Writer
 }
 
-type AuthenticatedClient struct {
+type Client struct {
 	UnauthenticatedClient
 	creds *UserCredentials
 }
@@ -137,7 +137,7 @@ func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io
 	return false // unreachable
 }
 
-func (client *AuthenticatedClient) handleResponsesLoop() {
+func (client *Client) handleResponsesLoop() {
 	for sResponse := range client.serverResponses {
 		client.handleIncomingResponse(sResponse)
 	}
@@ -145,7 +145,7 @@ func (client *AuthenticatedClient) handleResponsesLoop() {
 
 var ErrResponseForUnexpectedId = errors.New("got a response for an id we didn't send")
 
-func (client *AuthenticatedClient) handleIncomingResponse(sResponse ServerResponse) {
+func (client *Client) handleIncomingResponse(sResponse ServerResponse) {
 	client.pendingAcksLock.Lock()
 	defer client.pendingAcksLock.Unlock()
 	if ack, exists := client.pendingAcks[sResponse.Id]; exists {
@@ -163,7 +163,7 @@ func (client *AuthenticatedClient) handleIncomingResponse(sResponse ServerRespon
 
 var ErrClientHasQuitExtinguished = errors.New("client has quit")
 
-func authenticateWithRetry(client *UnauthenticatedClient) (*AuthenticatedClient, error) {
+func authenticateWithRetry(client *UnauthenticatedClient) (*Client, error) {
 	for {
 		creds, action, err := promptForAuthTypeAndUser(client.userInput, client.userOutput)
 		if err == ErrClientHasQuit {
@@ -209,7 +209,7 @@ func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 	}
 }
 
-func (client *AuthenticatedClient) handleClientMessagesLoop() error {
+func (client *Client) handleClientMessagesLoop() error {
 	for {
 		select {
 		case err := <-client.errs:
@@ -229,7 +229,7 @@ func (client *AuthenticatedClient) handleClientMessagesLoop() error {
 		}
 	}
 }
-func (client *AuthenticatedClient) sendMsgExpectResponseTimeout(msgContent string) {
+func (client *Client) sendMsgExpectResponseTimeout(msgContent string) {
 	id := getUniqueID()
 
 	ack := client.insertExpectedResponseId(id)
@@ -248,9 +248,7 @@ func getUniqueID() ID {
 	return ID(strconv.FormatInt(new_, 10))
 }
 
-var ErrMsgWasntAcked = errors.New("didn't get an ack for msg")
-
-func (client *AuthenticatedClient) insertExpectedResponseId(id ID) <-chan Response {
+func (client *Client) insertExpectedResponseId(id ID) <-chan Response {
 	ack := make(chan Response, 1)
 
 	client.pendingAcksLock.Lock()
@@ -271,7 +269,7 @@ func expectResponseFromChanWithTimeout(id ID, ack <-chan Response, expected Resp
 	}
 }
 
-func (client *AuthenticatedClient) runCmd(cmd Cmd) {
+func (client *Client) runCmd(cmd Cmd) {
 	switch cmd {
 	case LogoutCmd:
 		client.errs <- ErrServerLoggedUsOut
@@ -283,7 +281,7 @@ func (client *AuthenticatedClient) runCmd(cmd Cmd) {
 
 var ErrInvalidCast = errors.New("couldn't cast")
 
-func (client *AuthenticatedClient) sendMsgWithTimeout(id ID, msg string) error {
+func (client *Client) sendMsgWithTimeout(id ID, msg string) error {
 	conn, ok := client.serverInput.(net.Conn)
 	if !ok {
 		return ErrInvalidCast
@@ -314,7 +312,7 @@ func promptForAuthTypeAndUser(userInput <-chan ReadOutput, out io.Writer) (*User
 
 var ErrInvalidAuth = errors.New("username exists and such")
 
-func (client *UnauthenticatedClient) authenticateWithServer(creds *UserCredentials, action AuthAction) (*AuthenticatedClient, error) {
+func (client *UnauthenticatedClient) authenticateWithServer(creds *UserCredentials, action AuthAction) (*Client, error) {
 	err, response := client.authenticate(action, creds)
 	if err != nil {
 		return nil, err
@@ -323,7 +321,7 @@ func (client *UnauthenticatedClient) authenticateWithServer(creds *UserCredentia
 		fmt.Fprintln(client.userOutput, response)
 		return nil, ErrInvalidAuth
 	}
-	me := &AuthenticatedClient{*client, creds}
+	me := &Client{*client, creds}
 	return me, nil
 }
 
