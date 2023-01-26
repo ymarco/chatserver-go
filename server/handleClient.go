@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"bufio"
@@ -7,11 +7,12 @@ import (
 	"log"
 	"net"
 	"strings"
+	. "util"
 )
 
 type UserCredentials struct {
-	name     string
-	password string
+	Name     string
+	Password string
 }
 type Client struct {
 	pendingMsgs <-chan ChatMessage
@@ -49,9 +50,9 @@ func strToAuthAction(str string) (AuthAction, error) {
 	}
 }
 
-// scanLine is a wrapper around Scanner.Scan() to return EOF as errors instead
+// ScanLine is a wrapper around Scanner.Scan() to return EOF as errors instead
 // of bools
-func scanLine(s *bufio.Scanner) (string, error) {
+func ScanLine(s *bufio.Scanner) (string, error) {
 	if !s.Scan() {
 		if s.Err() == nil {
 			return "", io.EOF
@@ -64,7 +65,7 @@ func scanLine(s *bufio.Scanner) (string, error) {
 
 func acceptAuthRequest(clientConn net.Conn) (*AuthRequest, error) {
 	clientOutput := bufio.NewScanner(clientConn)
-	choice, err := scanLine(clientOutput)
+	choice, err := ScanLine(clientOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -73,12 +74,12 @@ func acceptAuthRequest(clientConn net.Conn) (*AuthRequest, error) {
 		return nil, err
 	}
 
-	username, err := scanLine(clientOutput)
+	username, err := ScanLine(clientOutput)
 	if err != nil {
 		return nil, err
 	}
 
-	password, err := scanLine(clientOutput)
+	password, err := ScanLine(clientOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +102,7 @@ func (hub *Hub) HandleNewConnection(conn net.Conn) {
 	if err == ErrClientHasQuit {
 		return
 	} else if err != nil {
-		log.Printf("Err with %s: %s", client.Creds.name, err)
+		log.Printf("Err with %s: %s", client.Creds.Name, err)
 		return
 	}
 	defer hub.Logout(client.Creds)
@@ -121,13 +122,13 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {
 
 		response, client := hub.TryToAuthenticate(request)
 		if response == ResponseOk {
-			return client, client.forwardResponse(ID(""), ResponseOk)
+			return client, client.forwardResponseToUser(ID(""), ResponseOk)
 		}
 
 		// try to communicate that we're retrying
-		err = forwardResponse(clientConn, ID(""), response)
+		err = forwardResponseToUser(clientConn, ID(""), response)
 		if err != nil {
-			log.Printf("Error with %s: %s\n", client.Creds.name, err)
+			log.Printf("Error with %s: %s\n", client.Creds.Name, err)
 			return nil, err
 		}
 	}
@@ -135,26 +136,26 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*Client, error) {
 
 const serverResponsePrefix = "r"
 
-func forwardResponse(conn net.Conn, id ID, r Response) error {
+func forwardResponseToUser(conn net.Conn, id ID, r Response) error {
 	_, err := conn.Write([]byte(serverResponsePrefix + string(id) +
-		idSeparator + string(r) + "\n"))
+		IdSeparator + string(r) + "\n"))
 	return err
 }
-func (client *Client) forwardResponse(id ID, r Response) error {
-	return forwardResponse(client.conn, id, r)
+func (client *Client) forwardResponseToUser(id ID, r Response) error {
+	return forwardResponseToUser(client.conn, id, r)
 }
 
 func (client *Client) handleMessagesLoop() error {
-	userInput := readAsyncIntoChan(bufio.NewScanner(client.conn))
+	userInput := ReadAsyncIntoChan(bufio.NewScanner(client.conn))
 
 	for {
 		select {
 		case input := <-userInput:
-			if input.err != nil {
-				return input.err
+			if input.Err != nil {
+				return input.Err
 			}
 			go func() {
-				err := client.dispatchUserInput(input.val)
+				err := client.dispatchUserInput(input.Val)
 				if err != nil {
 					client.errs <- err
 					return
@@ -175,38 +176,37 @@ func (client *Client) handleMessagesLoop() error {
 	}
 }
 
-type ID string
 
 func isCommand(s string) bool {
 	return strings.HasPrefix(s, cmdPrefix)
 }
 
 func parseInputMsg(input string) (id ID, msg string, ok bool) {
-	if !strings.HasPrefix(input, msgPrefix) {
+	if !strings.HasPrefix(input, MsgPrefix) {
 		return "", "", false
 	}
-	input = input[len(msgPrefix):]
-	parts := strings.Split(input, idSeparator)
+	input = input[len(MsgPrefix):]
+	parts := strings.Split(input, IdSeparator)
 	if len(parts) < 2 {
 		return "", "", false
 	}
 	id = ID(parts[0])
-	msg = input[len(id)+len(idSeparator):]
+	msg = input[len(id)+len(IdSeparator):]
 	return id, msg, true
 }
 
 func (client *Client) dispatchUserInput(input string) error {
 	if id, msg, ok := parseInputMsg(input); ok {
 		if isCommand(msg) {
-			cmd := toCmd(msg)
-			err := client.forwardResponse(id, ResponseOk)
+			cmd := ToCmd(msg)
+			err := client.forwardResponseToUser(id, ResponseOk)
 			if err != nil {
 				return err
 			}
 			return client.runUserCommand(cmd)
 		} else {
 			response := client.hub.BroadcastMessageWait(msg, client.Creds)
-			return client.forwardResponse(id, response)
+			return client.forwardResponseToUser(id, response)
 		}
 	} else {
 		return ErrOddOutput
@@ -223,16 +223,16 @@ func (client *Client) runUserCommand(cmd Cmd) error {
 		client.hub.Logout(client.Creds)
 		return client.forwardCmd(LogoutCmd)
 	default:
-		msg := NewChatMessage(&UserCredentials{name: "server"}, "Invalid command")
+		msg := NewChatMessage(&UserCredentials{Name: "runServer"}, "Invalid command")
 		return client.forwardMsg(msg)
 	}
 }
 
-const msgPrefix = "m"
-const idSeparator = ";"
+const MsgPrefix = "m"
+const IdSeparator = ";"
 
 func (client *Client) forwardMsg(msg ChatMessage) error {
-	_, err := client.conn.Write([]byte(msgPrefix + msg.sender.name + ": " +
+	_, err := client.conn.Write([]byte(MsgPrefix + msg.sender.Name + ": " +
 		string(msg.content) + "\n"))
 	return err
 }
@@ -245,15 +245,15 @@ func (client *Client) forwardCmd(cmd Cmd) error {
 }
 
 type ReadOutput struct {
-	val string
-	err error
+	Val string
+	Err error
 }
 
-func readAsyncIntoChan(scanner *bufio.Scanner) <-chan ReadOutput {
+func ReadAsyncIntoChan(scanner *bufio.Scanner) <-chan ReadOutput {
 	outputs := make(chan ReadOutput)
 	go func() {
 		for {
-			s, err := scanLine(scanner)
+			s, err := ScanLine(scanner)
 			outputs <- ReadOutput{s, err}
 			if err != nil {
 				return

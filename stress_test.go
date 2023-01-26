@@ -2,23 +2,26 @@ package main
 
 import (
 	"bufio"
+	"client"
 	"fmt"
 	"io"
+	"server"
 	"testing"
 	"time"
+	. "util"
 )
 
 func TestStress(t *testing.T) {
 	port := ":7000"
-	go server(port)
+	go server.RunServer(port)
 	time.Sleep(time.Millisecond * 100)
 	client1 := NewClientRun(port)
 	defer client1.Close()
 	// client1.peek(t)
 	client2 := NewClientRun(port)
 	defer client2.Close()
-	client1.RegisterWait(&UserCredentials{"yoav", "1234"}, t)
-	client2.RegisterWait(&UserCredentials{"bob", "0987"}, t)
+	client1.RegisterWait(&server.UserCredentials{Name: "yoav", Password: "1234"}, t)
+	client2.RegisterWait(&server.UserCredentials{Name: "bob", Password: "0987"}, t)
 
 	// nMessages := 2 << 14
 	// go spamMessages(client1.input, nMessages, t)
@@ -29,7 +32,7 @@ func TestStress(t *testing.T) {
 }
 
 type ClientRoutineController struct {
-	user   *UserCredentials
+	user   *server.UserCredentials
 	input  *io.PipeWriter
 	output *io.PipeReader
 }
@@ -39,7 +42,7 @@ func NewClientRun(port string) (c ClientRoutineController) {
 	c.input = clientIn
 	clientOut, stdout := io.Pipe()
 	c.output = clientOut
-	go client(port, stdin, stdout)
+	go client.RunClient(port, stdin, stdout)
 	return c
 }
 func (client *ClientRoutineController) peek(t *testing.T) {
@@ -49,11 +52,11 @@ func (client *ClientRoutineController) peek(t *testing.T) {
 
 	go func() {
 		s := bufio.NewScanner(newStdin)
-		i, err := scanLine(s)
+		i, err := server.ScanLine(s)
 		for err != nil {
 			t.Logf("%s received: %s", client.user, i)
 			originalIn.Write([]byte(i))
-			i, err = scanLine(s)
+			i, err = server.ScanLine(s)
 		}
 	}()
 
@@ -63,20 +66,20 @@ func (client *ClientRoutineController) peek(t *testing.T) {
 
 	go func() {
 		s := bufio.NewScanner(originalOut)
-		i, err := scanLine(s)
+		i, err := server.ScanLine(s)
 		for err != nil {
 			t.Logf("%s printed: %s", client.user, i)
 			newStdout.Write([]byte(i))
-			i, err = scanLine(s)
+			i, err = server.ScanLine(s)
 		}
 	}()
 }
 
 func (client *ClientRoutineController) Close() {
-	closePrintErr(client.output)
-	closePrintErr(client.input)
+	ClosePrintErr(client.output)
+	ClosePrintErr(client.input)
 }
-func (client *ClientRoutineController) RegisterWait(user *UserCredentials, t *testing.T) {
+func (client *ClientRoutineController) RegisterWait(user *server.UserCredentials, t *testing.T) {
 	client.user = user
 	clientOut := bufio.NewScanner(client.output)
 	fmt.Println("skipping line")
@@ -89,16 +92,16 @@ func (client *ClientRoutineController) RegisterWait(user *UserCredentials, t *te
 		t.Error(err)
 	}
 	expect(clientOut, "Username:", t)
-	_, err = client.input.Write([]byte(client.user.name + "\n"))
+	_, err = client.input.Write([]byte(client.user.Name + "\n"))
 	if err != nil {
 		t.Error(err)
 	}
 	expect(clientOut, "Password:", t)
-	_, err = client.input.Write([]byte(client.user.password + "\n"))
+	_, err = client.input.Write([]byte(client.user.Password + "\n"))
 	if err != nil {
 		t.Error(err)
 	}
-	expect(clientOut, "Logged in as "+client.user.name, t)
+	expect(clientOut, "Logged in as "+client.user.Name, t)
 	expect(clientOut, "", t)
 }
 
@@ -119,7 +122,7 @@ func receiveMessages(clientOut io.Reader, n int, t *testing.T) []string {
 	scanner := bufio.NewScanner(clientOut)
 	res := make([]string, n)
 	for i := 0; i < n; i++ {
-		temp, err := scanLine(scanner)
+		temp, err := server.ScanLine(scanner)
 		res[i] = temp
 		if err != nil {
 			t.Error(err)
@@ -128,11 +131,11 @@ func receiveMessages(clientOut io.Reader, n int, t *testing.T) []string {
 	return res
 }
 func skipLine(s *bufio.Scanner) error {
-	_, err := scanLine(s)
+	_, err := server.ScanLine(s)
 	return err
 }
 func expect(clientOut *bufio.Scanner, expected string, t *testing.T) {
-	s, err := scanLine(clientOut)
+	s, err := server.ScanLine(clientOut)
 	if err != nil {
 		t.Error("expect ", err)
 	}

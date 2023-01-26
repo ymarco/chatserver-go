@@ -1,39 +1,46 @@
-package main
+package server
 
 import (
 	"context"
 	"errors"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"time"
+	. "util"
 )
 
-type Response string
+func RunServer(port string) {
+	listener, err := net.Listen("tcp4", port)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	log.Printf("Listening at %s\n", listener.Addr())
+	defer ClosePrintErr(listener)
+	hub := NewHub()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Fatalln(err)
+		}
+		log.Printf("Connected: %s\n", conn.RemoteAddr())
+		go hub.HandleNewConnection(conn)
+	}
+}
 
-var (
-	ResponseOk                 = Response("Ok")
-	ResponseUserAlreadyOnline  = Response("User already online")
-	ResponseUsernameExists     = Response("Username already exists")
-	ResponseInvalidCredentials = Response("Wrong username or password")
-	ResponseMsgFailedForSome   = Response("Message failed to send to some users")
-	ResponseMsgFailedForAll    = Response("Message failed to send to any users")
-	// ResponseIoErrorOccurred should be returned along with a normal error type
-	ResponseIoErrorOccurred = Response("IO error, couldn't get a response")
-)
-
-func parseServerResponse(s string) (ServerResponse, bool) {
+func ParseServerResponse(s string) (ServerResponse, bool) {
 	if !strings.HasPrefix(s, serverResponsePrefix) {
 		return ServerResponse{}, false
 	}
 	s = s[len(serverResponsePrefix):]
-	parts := strings.Split(s, idSeparator)
+	parts := strings.Split(s, IdSeparator)
 	if len(parts) < 2 {
 		return ServerResponse{}, false
 	}
 	id := ID(parts[0])
-	response := Response(s[len(id)+len(idSeparator):])
-	return ServerResponse{response, id}, true
+	response := Response(s[len(id)+len(IdSeparator):])
+	return ServerResponse{Response: response, Id: id}, true
 }
 
 type Hub struct {
@@ -67,15 +74,15 @@ func (hub *Hub) testAuth(request *AuthRequest) Response {
 
 	switch request.authType {
 	case ActionLogin:
-		pass, exists := hub.userDB[request.creds.name]
-		if !exists || pass != request.creds.password {
+		pass, exists := hub.userDB[request.creds.Name]
+		if !exists || pass != request.creds.Password {
 			return ResponseInvalidCredentials
 		} else if _, isActive := hub.activeUsers[*request.creds]; isActive {
 			return ResponseUserAlreadyOnline
 		}
 		return ResponseOk
 	case ActionRegister:
-		if _, exists := hub.userDB[request.creds.name]; exists {
+		if _, exists := hub.userDB[request.creds.Name]; exists {
 			return ResponseUsernameExists
 		}
 		return ResponseOk
@@ -91,16 +98,16 @@ func (hub *Hub) logClientIn(request *AuthRequest) *Client {
 	defer hub.userDBLock.Unlock()
 
 	client := hub.newClient(request)
-	hub.userDB[client.Creds.name] = client.Creds.password
+	hub.userDB[client.Creds.Name] = client.Creds.Password
 	hub.activeUsers[*client.Creds] = client
-	log.Printf("Logged in: %s\n", client.Creds.name)
+	log.Printf("Logged in: %s\n", client.Creds.Name)
 	return client
 }
 func (hub *Hub) Logout(creds *UserCredentials) {
 	hub.activeUsersLock.Lock()
 	defer hub.activeUsersLock.Unlock()
 	delete(hub.activeUsers, *creds)
-	log.Printf("Logged out: %s\n", creds.name)
+	log.Printf("Logged out: %s\n", creds.Name)
 }
 
 type ChatMessage struct {

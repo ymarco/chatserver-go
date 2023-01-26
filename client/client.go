@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"bufio"
@@ -8,37 +8,23 @@ import (
 	"log"
 	"net"
 	"os"
+	"server"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+	. "util"
 )
 
-type Msg string
-
-type Cmd string
-
-func isCmd(s string) bool {
-	return strings.HasPrefix(s, "/")
-}
-func toCmd(s string) Cmd {
-	return Cmd(s[1:])
-}
-
-func client(port string, in io.Reader, out io.Writer) {
-	userInput := readAsyncIntoChan(bufio.NewScanner(in))
+func RunClient(port string, in io.Reader, out io.Writer) {
+	userInput := server.ReadAsyncIntoChan(bufio.NewScanner(in))
 
 	shouldRetry := true
 	for shouldRetry {
 		shouldRetry = runClientUntilDisconnected(port, userInput, out)
 	}
-}
-
-type ServerResponse struct {
-	response Response
-	id       ID
 }
 
 type UnauthenticatedClient struct {
@@ -53,20 +39,20 @@ type UnauthenticatedClient struct {
 	pendingAcksLock *sync.Mutex // a pointer to avoid copying when turning
 	// into an authenticated client
 
-	userInput  <-chan ReadOutput
+	userInput  <-chan server.ReadOutput
 	userOutput io.Writer
 }
 
 type AuthenticatedClient struct {
 	UnauthenticatedClient
-	creds *UserCredentials
+	creds *server.UserCredentials
 }
 
 func parseIncomingMsg(s string) (msg string, ok bool) {
-	if !strings.HasPrefix(s, msgPrefix) {
+	if !strings.HasPrefix(s, server.MsgPrefix) {
 		return "", false
 	}
-	s = s[len(msgPrefix):]
+	s = s[len(server.MsgPrefix):]
 	return s, true
 }
 
@@ -84,17 +70,17 @@ func splitServerOutputAsync(output io.Reader, errs chan<- error) (
 		defer close(msgs)
 		defer close(cmds)
 		for {
-			s, err := scanLine(scanner)
+			s, err := server.ScanLine(scanner)
 			if err != nil {
 				errs <- err
 				return
 			}
-			if serverResponse, ok := parseServerResponse(s); ok {
+			if serverResponse, ok := server.ParseServerResponse(s); ok {
 				responses <- serverResponse
 			} else if msg, ok := parseIncomingMsg(s); ok {
 				msgs <- msg
-			} else if isCmd(s) {
-				cmds <- toCmd(s)
+			} else if IsCmd(s) {
+				cmds <- ToCmd(s)
 			}
 
 		}
@@ -102,7 +88,7 @@ func splitServerOutputAsync(output io.Reader, errs chan<- error) (
 	return responses, msgs, cmds
 }
 
-func connectToSocket(port string, userInput <-chan ReadOutput, out io.Writer) *UnauthenticatedClient {
+func connectToSocket(port string, userInput <-chan server.ReadOutput, out io.Writer) *UnauthenticatedClient {
 	serverConn, err := connectToPortWithRetry(port, out)
 	if err != nil {
 		log.Fatalln(err)
@@ -117,10 +103,10 @@ func connectToSocket(port string, userInput <-chan ReadOutput, out io.Writer) *U
 		serverInput, pendingAcks, &sync.Mutex{}, userInput, out}
 }
 
-func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io.Writer) (shouldRetry bool) {
+func runClientUntilDisconnected(port string, userInput <-chan server.ReadOutput, out io.Writer) (shouldRetry bool) {
 	log.SetOutput(out)
 	client := connectToSocket(port, userInput, out)
-	defer closePrintErr(client.serverInput.(net.Conn))
+	defer ClosePrintErr(client.serverInput.(net.Conn))
 	me, err := authenticateWithRetry(client)
 	if err == io.EOF {
 		fmt.Fprintln(out, "Server closed, retrying")
@@ -128,7 +114,7 @@ func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io
 	} else if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Fprintf(out, "Logged in as %s\n\n", me.creds.name)
+	fmt.Fprintf(out, "Logged in as %s\n\n", me.creds.Name)
 
 	go me.handleResponsesLoop() // should return once we close serverInput since
 	// read would produce an error
@@ -163,11 +149,11 @@ var ErrResponseForUnexpectedId = errors.New("got a response for an id we didn't 
 func (client *AuthenticatedClient) handleIncomingResponse(sResponse ServerResponse) {
 	client.pendingAcksLock.Lock()
 	defer client.pendingAcksLock.Unlock()
-	if ack, exists := client.pendingAcks[sResponse.id]; exists {
-		delete(client.pendingAcks, sResponse.id)
-		ack <- sResponse.response
+	if ack, exists := client.pendingAcks[sResponse.Id]; exists {
+		delete(client.pendingAcks, sResponse.Id)
+		ack <- sResponse.Response
 	} else {
-		fmt.Printf("id we didn't expect: id = %s, while map is ", string(sResponse.id))
+		fmt.Printf("id we didn't expect: id = %s, while map is ", string(sResponse.Id))
 		for k := range client.pendingAcks {
 			fmt.Print(k, " ")
 		}
@@ -181,7 +167,7 @@ var ErrClientHasQuitExtinguished = errors.New("client has quit")
 func authenticateWithRetry(client *UnauthenticatedClient) (*AuthenticatedClient, error) {
 	for {
 		creds, action, err := promptForAuthTypeAndUser(client.userInput, client.userOutput)
-		if err == ErrClientHasQuit {
+		if err == server.ErrClientHasQuit {
 			return nil, ErrClientHasQuitExtinguished
 		}
 		if err != nil {
@@ -234,13 +220,13 @@ func (client *AuthenticatedClient) handleClientMessagesLoop() error {
 		case msg := <-client.serverMsgs:
 			fmt.Fprintln(client.userOutput, msg)
 		case line := <-client.userInput:
-			if line.err == ErrClientHasQuit {
+			if line.Err == server.ErrClientHasQuit {
 				return ErrClientHasQuitExtinguished
 			}
-			if line.err != nil {
-				return line.err
+			if line.Err != nil {
+				return line.Err
 			}
-			go client.sendMsgExpectResponseTimeout(line.val)
+			go client.sendMsgExpectResponseTimeout(line.Val)
 		}
 	}
 }
@@ -257,8 +243,8 @@ func (client *AuthenticatedClient) sendMsgExpectResponseTimeout(msgContent strin
 var globalID int64 = 0
 
 func getUniqueID() ID {
-	new := atomic.AddInt64(&globalID, 1)
-	return ID(strconv.FormatInt(new, 10))
+	new_ := atomic.AddInt64(&globalID, 1)
+	return ID(strconv.FormatInt(new_, 10))
 }
 
 var ErrMsgWasntAcked = errors.New("didn't get an ack for msg")
@@ -275,7 +261,7 @@ func (client *AuthenticatedClient) insertExpectedResponseId(id ID) <-chan Respon
 func (client *AuthenticatedClient) expectResponseForIdWithTimeout(id ID, expected Response) {
 	ack := client.insertExpectedResponseId(id)
 	select {
-	case <-time.After(MsgAckTimeout):
+	case <-time.After(server.MsgAckTimeout):
 		client.errs <- ErrMsgWasntAcked
 	case response := <-ack:
 		if response != expected {
@@ -284,12 +270,9 @@ func (client *AuthenticatedClient) expectResponseForIdWithTimeout(id ID, expecte
 	}
 }
 
-var ErrServerLoggedUsOut = errors.New("server logged us out")
-var ErrUnknownCommand = errors.New("unknown command")
-
 func (client *AuthenticatedClient) runCmd(cmd Cmd) {
 	switch cmd {
-	case LogoutCmd:
+	case server.LogoutCmd:
 		client.errs <- ErrServerLoggedUsOut
 	default:
 		client.errs <- ErrUnknownCommand
@@ -303,15 +286,21 @@ func (client *AuthenticatedClient) sendMsgWithTimeout(id ID, msg string) error {
 	if !ok {
 		return ErrInvalidCast
 	}
-	conn.SetWriteDeadline(time.Now().Add(MsgSendTimeout))
-	_, err := conn.Write([]byte(msgPrefix + string(id) + idSeparator + msg + "\n"))
-	conn.SetWriteDeadline(time.Time{})
+	err := conn.SetWriteDeadline(time.Now().Add(server.MsgSendTimeout))
+	if err != nil {
+		return err
+	}
+	_, err = conn.Write([]byte(server.MsgPrefix + string(id) + server.IdSeparator + msg + "\n"))
+	err = conn.SetWriteDeadline(time.Time{})
+	if err != nil {
+		return err
+	}
 	return err
 }
 
 var ErrServerTimedOut = errors.New("server timed out")
 
-func promptForAuthTypeAndUser(userInput <-chan ReadOutput, out io.Writer) (*UserCredentials, AuthAction, error) {
+func promptForAuthTypeAndUser(userInput <-chan server.ReadOutput, out io.Writer) (*server.UserCredentials, server.AuthAction, error) {
 	action, err := ChooseLoginOrRegister(userInput, out)
 	if err != nil {
 		return nil, action, err
@@ -323,7 +312,7 @@ func promptForAuthTypeAndUser(userInput <-chan ReadOutput, out io.Writer) (*User
 
 var ErrInvalidAuth = errors.New("username exists and such")
 
-func (client *UnauthenticatedClient) authenticateWithServer(creds *UserCredentials, action AuthAction) (*AuthenticatedClient, error) {
+func (client *UnauthenticatedClient) authenticateWithServer(creds *server.UserCredentials, action server.AuthAction) (*AuthenticatedClient, error) {
 	err, response := client.authenticate(action, creds)
 	if err != nil {
 		return nil, err
@@ -336,17 +325,17 @@ func (client *UnauthenticatedClient) authenticateWithServer(creds *UserCredentia
 	return me, nil
 }
 
-func ChooseLoginOrRegister(userInput <-chan ReadOutput, out io.Writer) (AuthAction, error) {
+func ChooseLoginOrRegister(userInput <-chan server.ReadOutput, out io.Writer) (server.AuthAction, error) {
 	for {
 		fmt.Fprintln(out, "Type r to register, l to login")
 
 		answer := <-userInput
-		if answer.err != nil {
-			return ActionIOErr, answer.err
+		if answer.Err != nil {
+			return server.ActionIOErr, answer.Err
 		}
-		action := AuthAction(answer.val)
+		action := server.AuthAction(answer.Val)
 		switch action {
-		case ActionLogin, ActionRegister:
+		case server.ActionLogin, server.ActionRegister:
 			return action, nil
 		default:
 			continue
@@ -356,36 +345,33 @@ func ChooseLoginOrRegister(userInput <-chan ReadOutput, out io.Writer) (AuthActi
 
 var ErrEmptyUsernameOrPassword = errors.New("empty username or password")
 
-func promptForUsernameAndPassword(userInput <-chan ReadOutput, out io.Writer) (*UserCredentials, error) {
+func promptForUsernameAndPassword(userInput <-chan server.ReadOutput, out io.Writer) (*server.UserCredentials, error) {
 	fmt.Fprintf(out, "Username:\n")
 
 	username := <-userInput
-	if username.err != nil {
-		return nil, username.err
+	if username.Err != nil {
+		return nil, username.Err
 	}
-	if username.val == "" {
+	if username.Val == "" {
 		return nil, ErrEmptyUsernameOrPassword
 	}
 
 	fmt.Fprintf(out, "Password:\n")
 	password := <-userInput
-	if password.err != nil {
-		return nil, password.err
+	if password.Err != nil {
+		return nil, password.Err
 	}
-	if password.val == "" {
+	if password.Val == "" {
 		return nil, ErrEmptyUsernameOrPassword
 	}
-	return &UserCredentials{username.val, password.val}, nil
+	return &server.UserCredentials{Name: username.Val, Password: password.Val}, nil
 }
 
-var ErrOddOutput = errors.New("unexpected output from server")
-var ResponseUnknown Response = "unexpected output from server"
-
-func (client *UnauthenticatedClient) authenticate(action AuthAction, creds *UserCredentials) (error, Response) {
+func (client *UnauthenticatedClient) authenticate(action server.AuthAction, creds *server.UserCredentials) (error, Response) {
 	_, err := client.serverInput.Write([]byte(
 		string(action) + "\n" +
-			creds.name + "\n" +
-			creds.password + "\n"))
+			creds.Name + "\n" +
+			creds.Password + "\n"))
 	if err != nil {
 		return err, ResponseIoErrorOccurred
 	}
@@ -393,7 +379,7 @@ func (client *UnauthenticatedClient) authenticate(action AuthAction, creds *User
 	var response Response
 	select {
 	case sResponse := <-client.serverResponses:
-		response = sResponse.response
+		response = sResponse.Response
 	case err := <-client.errs:
 		return err, ResponseIoErrorOccurred
 	}

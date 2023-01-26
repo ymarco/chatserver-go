@@ -1,3 +1,3 @@
-module go-project
+module chatserver
 
 go 1.19

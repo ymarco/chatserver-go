@@ -1,10 +1,10 @@
 package main
 
 import (
+	"client"
 	"fmt"
-	"log"
-	"net"
 	"os"
+	"server"
 )
 
 func main() {
@@ -16,40 +16,11 @@ func main() {
 	port, mode := ":"+os.Args[1], os.Args[2]
 	switch mode {
 	case "client":
-		client(port, os.Stdin, os.Stdout)
+		client.RunClient(port, os.Stdin, os.Stdout)
 	case "server":
-		server(port)
+		server.RunServer(port)
 	default:
 		fmt.Printf("MODE should be client or server, instead got %s\n", os.Args[2])
 		os.Exit(1)
-	}
-}
-
-type Closer interface {
-	Close() error
-}
-
-func closePrintErr(c Closer) {
-	err := c.Close()
-	if err != nil {
-		log.Println(err)
-	}
-}
-
-func server(port string) {
-	listener, err := net.Listen("tcp4", port)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	log.Printf("Listening at %s\n", listener.Addr())
-	defer closePrintErr(listener)
-	hub := NewHub()
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Fatalln(err)
-		}
-		log.Printf("Connected: %s\n", conn.RemoteAddr())
-		go hub.HandleNewConnection(conn)
 	}
 }
