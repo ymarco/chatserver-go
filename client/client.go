@@ -231,12 +231,14 @@ func (client *AuthenticatedClient) handleClientMessagesLoop() error {
 }
 func (client *AuthenticatedClient) sendMsgExpectResponseTimeout(msgContent string) {
 	id := getUniqueID()
+
+	ack := client.insertExpectedResponseId(id)
 	err := client.sendMsgWithTimeout(id, msgContent)
 	if err != nil {
 		client.errs <- err
 		return
 	}
-	client.expectResponseForIdWithTimeout(id, ResponseOk)
+	client.expectResponseFromChanWithTimeout(ack, ResponseOk)
 }
 
 var globalID int64 = 0
@@ -257,14 +259,14 @@ func (client *AuthenticatedClient) insertExpectedResponseId(id ID) <-chan Respon
 	client.pendingAcks[id] = ack
 	return ack
 }
-func (client *AuthenticatedClient) expectResponseForIdWithTimeout(id ID, expected Response) {
-	ack := client.insertExpectedResponseId(id)
+func (client *AuthenticatedClient) expectResponseFromChanWithTimeout(ack <-chan Response,
+	expected Response) {
 	select {
 	case <-time.After(MsgAckTimeout):
 		client.errs <- ErrMsgWasntAcked
 	case response := <-ack:
 		if response != expected {
-			fmt.Printf("Response for ID %s was %s\n", id, response)
+			fmt.Printf("Response was unexpectedly %s\n", response)
 		}
 	}
 }
