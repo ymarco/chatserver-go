@@ -104,13 +104,14 @@ func connectToSocket(port string, userInput <-chan ReadOutput, out io.Writer) *U
 
 func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io.Writer) (shouldRetry bool) {
 	log.SetOutput(out)
-	client := connectToSocket(port, userInput, out)
-	defer ClosePrintErr(client.serverInput.(net.Conn))
-	me, err := authenticateWithRetry(client)
-	if err == io.EOF {
-		fmt.Fprintln(out, "Server closed, retrying")
-		return true
-	} else if err != nil {
+	unauthedClient := connectToSocket(port, userInput, out)
+	defer ClosePrintErr(unauthedClient.serverInput.(net.Conn))
+	me, err := authenticateWithRetry(unauthedClient)
+	if err != nil {
+		if err == io.EOF {
+			fmt.Fprintln(out, "Server closed, retrying")
+			return true
+		}
 		log.Fatalln(err)
 	}
 	fmt.Fprintf(out, "Logged in as %s\n\n", me.creds.Name)
@@ -166,10 +167,10 @@ var ErrClientHasQuitExtinguished = errors.New("client has quit")
 func authenticateWithRetry(client *UnauthenticatedClient) (*Client, error) {
 	for {
 		creds, action, err := promptForAuthTypeAndUser(client.userInput, client.userOutput)
-		if err == ErrClientHasQuit {
-			return nil, ErrClientHasQuitExtinguished
-		}
 		if err != nil {
+			if err == ErrClientHasQuit {
+				return nil, ErrClientHasQuitExtinguished
+			}
 			return nil, err
 		}
 
@@ -201,7 +202,6 @@ func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 				time.Sleep(5 * time.Second)
 				continue
 			}
-
 			return nil, err
 		}
 

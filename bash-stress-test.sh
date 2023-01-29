@@ -23,7 +23,7 @@ client1() {
             (read-line) ; "Logged in as..."
             (flush)
             (read-line) ; ""
-            (println "client1: " (count (line-seq (java.io.BufferedReader. *in*))))'
+            (println "client1: received " (count (line-seq (java.io.BufferedReader. *in*))))'
 }
 client2() {
     echo $MSGS_COUNT\
@@ -43,7 +43,7 @@ client2() {
             (read-line) ; "Logged in as..."
             (flush)
             (read-line) ; ""
-            (println "client2: " (count (line-seq (java.io.BufferedReader. *in*))))'
+            (println "client2: received " (count (line-seq (java.io.BufferedReader. *in*))))'
 }
 go run . $PORT server&
 serverPID=$!
