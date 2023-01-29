@@ -10,8 +10,8 @@ import (
 )
 
 type ClientHandler struct {
-	pendingMsgs <-chan ChatMessage
-	SendMsg     chan<- ChatMessage
+	pendingMsgs <-chan *ChatMessage
+	SendMsg     chan<- *ChatMessage
 	errs        chan error
 	Creds       *UserCredentials
 	conn        net.Conn
@@ -134,7 +134,7 @@ func (handler *ClientHandler) handleMessagesLoop() error {
 	}
 }
 
-func (handler *ClientHandler) forwardMsgToUserAsync(msg ChatMessage) {
+func (handler *ClientHandler) forwardMsgToUserAsync(msg *ChatMessage) {
 	go func() {
 		err := handler.forwardMsgToUser(msg)
 		if err != nil {
@@ -201,7 +201,7 @@ func (handler *ClientHandler) runUserCommand(cmd Cmd) error {
 	}
 }
 
-func (handler *ClientHandler) forwardMsgToUser(msg ChatMessage) error {
+func (handler *ClientHandler) forwardMsgToUser(msg *ChatMessage) error {
 	_, err := handler.conn.Write([]byte(MsgPrefix + msg.sender.Name + ": " +
 		msg.content + "\n"))
 	return err

@@ -100,8 +100,8 @@ type ChatMessage struct {
 	content string
 }
 
-func NewChatMessage(user *UserCredentials, content string) ChatMessage {
-	return ChatMessage{make(chan struct{}, 1), user, content}
+func NewChatMessage(user *UserCredentials, content string) *ChatMessage {
+	return &ChatMessage{make(chan struct{}, 1), user, content}
 }
 
 func (m *ChatMessage) Ack() {
@@ -113,8 +113,8 @@ func (m *ChatMessage) WaitForAck() {
 	<-m.ack
 }
 
-func NewMessagePipe() (send chan<- ChatMessage, receive <-chan ChatMessage) {
-	res := make(chan ChatMessage)
+func NewMessagePipe() (send chan<- *ChatMessage, receive <-chan *ChatMessage) {
+	res := make(chan *ChatMessage)
 	return res, res
 }
 
@@ -133,8 +133,8 @@ func (hub *Hub) BroadcastMessageWithTimeout(content string, sender *UserCredenti
 		if *client.Creds == *sender {
 			continue
 		}
-		go func(client *ClientHandler) {
-			errs <- sendMessageToClient(client, content, sender, ctx)
+		go func(handler *ClientHandler) {
+			errs <- sendMessageToClient(handler, content, sender, ctx)
 		}(client)
 	}
 	hub.activeUsersLock.RUnlock()
@@ -158,7 +158,7 @@ func (hub *Hub) BroadcastMessageWithTimeout(content string, sender *UserCredenti
 
 var ErrSendingTimedOut = errors.New("couldn't forward message to client: timed out")
 
-func sendMessageToClient(client *ClientHandler, content string,
+func sendMessageToClient(recipient *ClientHandler, content string,
 	sender *UserCredentials, ctx context.Context) error {
 	msg := NewChatMessage(sender, content)
 	select {
