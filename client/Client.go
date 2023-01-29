@@ -29,10 +29,10 @@ func RunClient(port string, in io.Reader, out io.Writer) {
 type UnauthenticatedClient struct {
 	errs chan error
 
-	serverResponses <-chan ServerResponse
-	serverMsgs      <-chan string
-	serverCmds      <-chan Cmd
-	serverInput     io.Writer
+	incomingResponses <-chan ServerResponse
+	incomingMsgs      <-chan string
+	incomingCmds      <-chan Cmd
+	serverInput       io.Writer
 
 	pendingAcks     map[ID]chan<- Response
 	pendingAcksLock *sync.Mutex // a pointer to avoid copying when turning
@@ -139,7 +139,7 @@ func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io
 }
 
 func (client *Client) handleResponsesLoop() {
-	for sResponse := range client.serverResponses {
+	for sResponse := range client.incomingResponses {
 		client.handleIncomingResponse(sResponse)
 	}
 }
@@ -214,9 +214,9 @@ func (client *Client) handleClientMessagesLoop() error {
 		select {
 		case err := <-client.errs:
 			return err
-		case cmd := <-client.serverCmds:
+		case cmd := <-client.incomingCmds:
 			go client.runCmd(cmd)
-		case msg := <-client.serverMsgs:
+		case msg := <-client.incomingMsgs:
 			fmt.Fprintln(client.userOutput, msg)
 		case line := <-client.userInput:
 			if line.Err == ErrClientHasQuit {
@@ -378,7 +378,7 @@ func (client *UnauthenticatedClient) authenticate(action AuthAction, creds *User
 
 	var response Response
 	select {
-	case sResponse := <-client.serverResponses:
+	case sResponse := <-client.incomingResponses:
 		response = sResponse.Response
 	case err := <-client.errs:
 		return err, ResponseIoErrorOccurred
