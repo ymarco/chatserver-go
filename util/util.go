@@ -89,8 +89,8 @@ func ReadAsyncIntoChan(scanner *bufio.Scanner) <-chan ReadOutput {
 	return outputs
 }
 
-// ScanLine is a wrapper around Scanner.Scan() to return EOF as errors instead
-// of bools
+// ScanLine is a wrapper around Scanner.Scan() that returns EOF as errors
+// instead of bools
 func ScanLine(s *bufio.Scanner) (string, error) {
 	if !s.Scan() {
 		if s.Err() == nil {

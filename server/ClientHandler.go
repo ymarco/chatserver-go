@@ -141,7 +141,6 @@ func (handler *ClientHandler) forwardMsgToUserAsync(msg *ChatMessage) {
 			handler.errs <- err
 			return
 		}
-		msg.Ack()
 	}()
 }
 
@@ -204,7 +203,12 @@ func (handler *ClientHandler) runUserCommand(cmd Cmd) error {
 func (handler *ClientHandler) forwardMsgToUser(msg *ChatMessage) error {
 	_, err := handler.conn.Write([]byte(MsgPrefix + msg.sender.Name + ": " +
 		msg.content + "\n"))
-	return err
+
+	if err != nil {
+		return err
+	}
+	msg.Ack()
+	return nil
 }
 
 const cmdPrefix = "/"

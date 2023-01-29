@@ -164,12 +164,12 @@ func sendMessageToClient(recipient *ClientHandler, content string,
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case client.SendMsg <- msg:
-		select {
-		case <-msg.ack:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	case recipient.SendMsg <- msg:
 	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-msg.ack:
+	}
+	return nil
 }
