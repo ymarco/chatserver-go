@@ -19,22 +19,21 @@ func ClosePrintErr(c io.Closer) {
 type Response string
 
 var (
-	ResponseOk                 = Response("Ok")
-	ResponseUserAlreadyOnline  = Response("User already online")
-	ResponseUsernameExists     = Response("Username already exists")
-	ResponseInvalidCredentials = Response("Wrong username or password")
-	ResponseMsgFailedForSome   = Response("Message failed to send to some users")
-	ResponseMsgFailedForAll    = Response("Message failed to send to any users")
+	ResponseOk                 Response = "Ok"
+	ResponseUserAlreadyOnline           = Response("User already online")
+	ResponseUsernameExists              = Response("Username already exists")
+	ResponseInvalidCredentials          = Response("Wrong username or password")
+	ResponseMsgFailedForSome            = Response("Message failed to send to some users")
+	ResponseMsgFailedForAll             = Response("Message failed to send to any users")
 	// ResponseIoErrorOccurred should be returned along with a normal error type
 	ResponseIoErrorOccurred = Response("IO error, couldn't get a response")
 )
 
-type ID string
+type MsgID string
 type ServerResponse struct {
 	Response Response
-	Id       ID
+	Id       MsgID
 }
-
 
 const ServerResponsePrefix = "r"
 
@@ -47,11 +46,10 @@ func ParseServerResponse(s string) (ServerResponse, bool) {
 	if len(parts) < 2 {
 		return ServerResponse{}, false
 	}
-	id := ID(parts[0])
+	id := MsgID(parts[0])
 	response := Response(s[len(id)+len(IdSeparator):])
 	return ServerResponse{Response: response, Id: id}, true
 }
-
 
 type Cmd string
 

@@ -34,7 +34,7 @@ type UnauthenticatedClient struct {
 	receiveCmd      <-chan Cmd
 	serverInput     io.Writer
 
-	pendingAcks     map[ID]chan<- Response
+	pendingAcks     map[MsgID]chan<- Response
 	pendingAcksLock *sync.Mutex // a pointer to avoid copying when turning
 	// into an authenticated client
 
@@ -69,26 +69,26 @@ func splitServerOutputAsync(output io.Reader, errs chan<- error) (
 		defer close(msgs)
 		defer close(cmds)
 		for {
-			s, err := ScanLine(scanner)
+			str, err := ScanLine(scanner)
 			if err != nil {
 				errs <- err
 				return
 			}
-			if serverResponse, ok := ParseServerResponse(s); ok {
+			if serverResponse, ok := ParseServerResponse(str); ok {
 				responses <- serverResponse
-			} else if msg, ok := parseIncomingMsg(s); ok {
+			} else if msg, ok := parseIncomingMsg(str); ok {
 				msgs <- msg
-			} else if IsCmd(s) {
-				cmds <- ToCmd(s)
+			} else if IsCmd(str) {
+				cmds <- ToCmd(str)
 			} else {
-				fmt.Printf("odd output from server: %s\n", s)
+				fmt.Printf("odd output from server: %s\n", str)
 			}
 		}
 	}()
 	return responses, msgs, cmds
 }
 
-func connectToSocket(port string, userInput <-chan ReadOutput, out io.Writer) *UnauthenticatedClient {
+func startSession(port string, userInput <-chan ReadOutput, out io.Writer) *UnauthenticatedClient {
 	serverConn, err := connectToPortWithRetry(port, out)
 	if err != nil {
 		log.Fatalln(err)
@@ -97,7 +97,7 @@ func connectToSocket(port string, userInput <-chan ReadOutput, out io.Writer) *U
 	errs := make(chan error, 128)
 	responses, msgs, cmds := splitServerOutputAsync(serverConn, errs)
 	serverInput := serverConn.(io.Writer)
-	pendingAcks := make(map[ID]chan<- Response)
+	pendingAcks := make(map[MsgID]chan<- Response)
 
 	return &UnauthenticatedClient{errs, responses, msgs, cmds,
 		serverInput, pendingAcks, &sync.Mutex{}, userInput, out}
@@ -105,7 +105,7 @@ func connectToSocket(port string, userInput <-chan ReadOutput, out io.Writer) *U
 
 func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io.Writer) (shouldRetry bool) {
 	log.SetOutput(out)
-	unauthedClient := connectToSocket(port, userInput, out)
+	unauthedClient := startSession(port, userInput, out)
 	defer ClosePrintErr(unauthedClient.serverInput.(net.Conn))
 	me, err := authenticateWithRetry(unauthedClient)
 	if err != nil {
@@ -147,20 +147,17 @@ func (client *Client) handleResponsesLoop() {
 
 var ErrResponseForUnexpectedId = errors.New("got a response for an id we didn't send")
 
-func (client *Client) handleIncomingResponse(sResponse ServerResponse) {
+func (client *Client) handleIncomingResponse(serverResponse ServerResponse) {
 	client.pendingAcksLock.Lock()
 	defer client.pendingAcksLock.Unlock()
-	if ack, exists := client.pendingAcks[sResponse.Id]; exists {
-		delete(client.pendingAcks, sResponse.Id)
-		ack <- sResponse.Response
-	} else {
-		fmt.Printf("id we didn't expect: id = %s, while map is ", string(sResponse.Id))
-		for k := range client.pendingAcks {
-			fmt.Print(k, " ")
-		}
-		fmt.Println()
+	ack, exists := client.pendingAcks[serverResponse.Id]
+	if !exists {
+		fmt.Printf("id we didn't expect: id = %s\n", string(serverResponse.Id))
 		client.errs <- ErrResponseForUnexpectedId
+		return
 	}
+	delete(client.pendingAcks, serverResponse.Id)
+	ack <- serverResponse.Response
 }
 
 var ErrClientHasQuitExtinguished = errors.New("client has quit")
@@ -178,8 +175,6 @@ func authenticateWithRetry(client *UnauthenticatedClient) (*Client, error) {
 		me, err := client.authenticateWithServer(creds, action)
 		if err != ErrInvalidAuth {
 			return me, err
-		} else {
-			continue
 		}
 	}
 }
@@ -244,12 +239,12 @@ func (client *Client) sendMsgExpectResponseTimeout(msgContent string) {
 
 var globalID int64 = 0
 
-func getUniqueID() ID {
+func getUniqueID() MsgID {
 	new_ := atomic.AddInt64(&globalID, 1)
-	return ID(strconv.FormatInt(new_, 10))
+	return MsgID(strconv.FormatInt(new_, 10))
 }
 
-func (client *Client) insertExpectedResponseId(id ID) <-chan Response {
+func (client *Client) insertExpectedResponseId(id MsgID) <-chan Response {
 	ack := make(chan Response, 1)
 
 	client.pendingAcksLock.Lock()
@@ -258,7 +253,7 @@ func (client *Client) insertExpectedResponseId(id ID) <-chan Response {
 	client.pendingAcks[id] = ack
 	return ack
 }
-func expectResponseFromChanWithTimeout(id ID, ack <-chan Response, expected Response) {
+func expectResponseFromChanWithTimeout(id MsgID, ack <-chan Response, expected Response) {
 	select {
 	case <-time.After(MsgAckTimeout):
 		log.Printf("Msg %s wasn't acked", id)
@@ -282,7 +277,7 @@ func (client *Client) runCmd(cmd Cmd) {
 
 var ErrInvalidCast = errors.New("couldn't cast")
 
-func (client *Client) sendMsgWithTimeout(id ID, msg string) error {
+func (client *Client) sendMsgWithTimeout(id MsgID, msg string) error {
 	conn, ok := client.serverInput.(net.Conn)
 	if !ok {
 		return ErrInvalidCast
@@ -292,10 +287,10 @@ func (client *Client) sendMsgWithTimeout(id ID, msg string) error {
 		return err
 	}
 	_, err = conn.Write([]byte(MsgPrefix + string(id) + IdSeparator + msg + "\n"))
-	err = conn.SetWriteDeadline(time.Time{})
 	if err != nil {
 		return err
 	}
+	err = conn.SetWriteDeadline(time.Time{})
 	return err
 }
 
@@ -338,8 +333,6 @@ func ChooseLoginOrRegister(userInput <-chan ReadOutput, out io.Writer) (AuthActi
 		switch action {
 		case ActionLogin, ActionRegister:
 			return action, nil
-		default:
-			continue
 		}
 	}
 }

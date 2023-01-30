@@ -44,10 +44,10 @@ func NewHub() *Hub {
 
 func (hub *Hub) TryToAuthenticate(request *AuthRequest) (Response, *ClientHandler) {
 	response := hub.testAuth(request)
-	if response == ResponseOk {
-		return response, hub.logClientIn(request)
+	if response != ResponseOk {
+		return response, nil
 	}
-	return response, nil
+	return response, hub.logClientIn(request)
 }
 func (hub *Hub) testAuth(request *AuthRequest) Response {
 	hub.activeUsersLock.Lock()

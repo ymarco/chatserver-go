@@ -107,12 +107,12 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*ClientHandler, error) {
 	}
 }
 
-func forwardResponseToUser(conn net.Conn, id ID, r Response) error {
+func forwardResponseToUser(conn net.Conn, id MsgID, r Response) error {
 	_, err := conn.Write([]byte(ServerResponsePrefix + string(id) +
 		IdSeparator + string(r) + "\n"))
 	return err
 }
-func (handler *ClientHandler) forwardResponseToUser(id ID, r Response) error {
+func (handler *ClientHandler) forwardResponseToUser(id MsgID, r Response) error {
 	return forwardResponseToUser(handler.conn, id, r)
 }
 
@@ -148,7 +148,7 @@ func isCommand(s string) bool {
 	return strings.HasPrefix(s, cmdPrefix)
 }
 
-func parseInputMsg(input string) (id ID, msg string, ok bool) {
+func parseInputMsg(input string) (id MsgID, msg string, ok bool) {
 	if !strings.HasPrefix(input, MsgPrefix) {
 		return "", "", false
 	}
@@ -157,7 +157,7 @@ func parseInputMsg(input string) (id ID, msg string, ok bool) {
 	if len(parts) < 2 {
 		return "", "", false
 	}
-	id = ID(parts[0])
+	id = MsgID(parts[0])
 	msg = input[len(id)+len(IdSeparator):]
 	return id, msg, true
 }
@@ -172,20 +172,22 @@ func (handler *ClientHandler) dispatchUserInputAsync(input string) {
 	}()
 }
 func (handler *ClientHandler) dispatchUserInput(input string) error {
-	if id, msg, ok := parseInputMsg(input); ok {
-		if isCommand(msg) {
-			cmd := ToCmd(msg)
-			err := handler.forwardResponseToUser(id, ResponseOk)
-			if err != nil {
-				return err
-			}
-			return handler.runUserCommand(cmd)
-		} else {
-			response := handler.hub.BroadcastMessageWithTimeout(msg, handler.Creds)
-			return handler.forwardResponseToUser(id, response)
-		}
-	} else {
+	id, msg, ok := parseInputMsg(input)
+	if !ok {
 		return ErrOddOutput
+	}
+
+	if isCommand(msg) {
+		cmd := ToCmd(msg)
+		err := handler.forwardResponseToUser(id, ResponseOk)
+		if err != nil {
+			return err
+		}
+		return handler.runUserCommand(cmd)
+	} else {
+
+		response := handler.hub.BroadcastMessageWithTimeout(msg, handler.Creds)
+		return handler.forwardResponseToUser(id, response)
 	}
 }
 
@@ -195,7 +197,7 @@ func (handler *ClientHandler) runUserCommand(cmd Cmd) error {
 		handler.hub.Logout(handler.Creds)
 		return handler.forwardCmdToUser(LogoutCmd)
 	default:
-		msg := NewChatMessage(&UserCredentials{Name: "runServer"}, "Invalid command")
+		msg := NewChatMessage(&UserCredentials{Name: "server"}, "Invalid command")
 		return handler.forwardMsgToUser(msg)
 	}
 }
