@@ -156,7 +156,6 @@ func (client *Client) handleIncomingResponse(serverResponse ServerResponse) {
 		client.errs <- ErrResponseForUnexpectedId
 		return
 	}
-	delete(client.pendingAcks, serverResponse.Id)
 	ack <- serverResponse.Response
 }
 
@@ -253,6 +252,12 @@ func (client *Client) insertExpectedResponseId(id MsgID) <-chan Response {
 	client.pendingAcks[id] = ack
 	return ack
 }
+func (client *Client) removeExpectedResponseId(id MsgID) {
+	client.pendingAcksLock.Lock()
+	defer client.pendingAcksLock.Unlock()
+	delete(client.pendingAcks, id)
+}
+
 func expectResponseFromChanWithTimeout(id MsgID, ack <-chan Response, expected Response) {
 	select {
 	case <-time.After(MsgAckTimeout):
