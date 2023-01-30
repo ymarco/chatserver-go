@@ -21,7 +21,6 @@ client1() {
             (read-line) ; "Username:"
             (read-line) ; "Password:"
             (read-line) ; "Logged in as..."
-            (flush)
             (read-line) ; ""
             (println "client1: received " (count (line-seq (java.io.BufferedReader. *in*))))'
 }
@@ -41,7 +40,6 @@ client2() {
             (read-line) ; "Username:"
             (read-line) ; "Password:"
             (read-line) ; "Logged in as..."
-            (flush)
             (read-line) ; ""
             (println "client2: received " (count (line-seq (java.io.BufferedReader. *in*))))'
 }

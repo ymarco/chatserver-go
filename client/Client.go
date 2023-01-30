@@ -80,8 +80,9 @@ func splitServerOutputAsync(output io.Reader, errs chan<- error) (
 				msgs <- msg
 			} else if IsCmd(s) {
 				cmds <- ToCmd(s)
+			} else {
+				fmt.Printf("odd output from server: %s\n", s)
 			}
-
 		}
 	}()
 	return responses, msgs, cmds
@@ -219,10 +220,10 @@ func (client *Client) handleClientMessagesLoop() error {
 		case msg := <-client.receiveMsg:
 			fmt.Fprintln(client.userOutput, msg)
 		case line := <-client.userInput:
-			if line.Err == ErrClientHasQuit {
-				return ErrClientHasQuitExtinguished
-			}
 			if line.Err != nil {
+				if line.Err == ErrClientHasQuit {
+					return ErrClientHasQuitExtinguished
+				}
 				return line.Err
 			}
 			go client.sendMsgExpectResponseTimeout(line.Val)
