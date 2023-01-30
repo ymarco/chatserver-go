@@ -118,7 +118,7 @@ func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io
 	fmt.Fprintf(out, "Logged in as %s\n\n", me.creds.Name)
 
 	// all of these should return once we close serverInput, since read would
-	// produce an error and the splitter would close the channels
+	// produce an error and the splitServerOutputAsync would close the channels
 	go me.handleResponsesLoop()
 	go me.sendMsgsLoop()
 	go me.receiveMsgsLoop()
