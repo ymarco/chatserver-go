@@ -56,7 +56,7 @@ func acceptAuthRequest(clientConn net.Conn) (*AuthRequest, error) {
 		return nil, err
 	}
 
-	return &AuthRequest{action, clientConn, &UserCredentials{Name: username, Password: password}}, nil
+	return &AuthRequest{action, clientConn, &UserCredentials{Name: Username(username), Password: Password(password)}}, nil
 }
 func (hub *Hub) newClientHandler(r *AuthRequest) *ClientHandler {
 	sendMsg, receiveMsg := NewMessagePipe()
@@ -78,7 +78,7 @@ func (hub *Hub) HandleNewConnection(conn net.Conn) {
 		log.Printf("Err with %s: %s", handler.Creds.Name, err)
 		return
 	}
-	defer hub.Logout(handler.Creds)
+	defer hub.Logout(handler.Creds.Name)
 
 	err = handler.handleMessagesLoop()
 	if err != ErrClientHasQuit {
@@ -186,7 +186,7 @@ func (handler *ClientHandler) dispatchUserInput(input string) error {
 		return handler.runUserCommand(cmd)
 	} else {
 
-		response := handler.hub.BroadcastMessageWithTimeout(msg, handler.Creds)
+		response := handler.hub.BroadcastMessageWithTimeout(msg, handler.Creds.Name)
 		return handler.forwardResponseToUser(id, response)
 	}
 }
@@ -194,16 +194,16 @@ func (handler *ClientHandler) dispatchUserInput(input string) error {
 func (handler *ClientHandler) runUserCommand(cmd Cmd) error {
 	switch cmd {
 	case LogoutCmd:
-		handler.hub.Logout(handler.Creds)
+		handler.hub.Logout(handler.Creds.Name)
 		return handler.forwardCmdToUser(LogoutCmd)
 	default:
-		msg := NewChatMessage(&UserCredentials{Name: "server"}, "Invalid command")
+		msg := NewChatMessage(Username("server"), "Invalid command")
 		return handler.forwardMsgToUser(msg)
 	}
 }
 
 func (handler *ClientHandler) forwardMsgToUser(msg *ChatMessage) error {
-	_, err := handler.conn.Write([]byte(MsgPrefix + msg.sender.Name + ": " +
+	_, err := handler.conn.Write([]byte(MsgPrefix + string(msg.sender) + ": " +
 		msg.content + "\n"))
 
 	if err != nil {

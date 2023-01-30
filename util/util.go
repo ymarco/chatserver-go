@@ -100,9 +100,12 @@ func ScanLine(s *bufio.Scanner) (string, error) {
 	return s.Text(), nil
 }
 
+type Username string
+type Password string
+
 type UserCredentials struct {
-	Name     string
-	Password string
+	Name     Username
+	Password Password
 }
 
 const MsgPrefix = "m"

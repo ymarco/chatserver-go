@@ -28,17 +28,17 @@ func RunServer(port string) {
 }
 
 type Hub struct {
-	activeUsers     map[UserCredentials]*ClientHandler
+	activeUsers     map[Username]*ClientHandler
 	activeUsersLock sync.RWMutex
 
-	userDB     map[string]string
+	userDB     map[Username]Password
 	userDBLock sync.RWMutex
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		activeUsers: make(map[UserCredentials]*ClientHandler),
-		userDB:      make(map[string]string),
+		activeUsers: make(map[Username]*ClientHandler),
+		userDB:      make(map[Username]Password),
 	}
 }
 
@@ -61,7 +61,7 @@ func (hub *Hub) testAuth(request *AuthRequest) Response {
 		pass, exists := hub.userDB[request.creds.Name]
 		if !exists || pass != request.creds.Password {
 			return ResponseInvalidCredentials
-		} else if _, isActive := hub.activeUsers[*request.creds]; isActive {
+		} else if _, isActive := hub.activeUsers[request.creds.Name]; isActive {
 			return ResponseUserAlreadyOnline
 		}
 		return ResponseOk
@@ -83,25 +83,25 @@ func (hub *Hub) logClientIn(request *AuthRequest) *ClientHandler {
 
 	client := hub.newClientHandler(request)
 	hub.userDB[client.Creds.Name] = client.Creds.Password
-	hub.activeUsers[*client.Creds] = client
+	hub.activeUsers[client.Creds.Name] = client
 	log.Printf("Logged in: %s\n", client.Creds.Name)
 	return client
 }
-func (hub *Hub) Logout(creds *UserCredentials) {
+func (hub *Hub) Logout(name Username) {
 	hub.activeUsersLock.Lock()
 	defer hub.activeUsersLock.Unlock()
-	delete(hub.activeUsers, *creds)
-	log.Printf("Logged out: %s\n", creds.Name)
+	delete(hub.activeUsers, name)
+	log.Printf("Logged out: %s\n", name)
 }
 
 type ChatMessage struct {
 	ack     chan struct{}
-	sender  *UserCredentials
+	sender  Username
 	content string
 }
 
-func NewChatMessage(user *UserCredentials, content string) *ChatMessage {
-	return &ChatMessage{make(chan struct{}, 1), user, content}
+func NewChatMessage(sender Username, content string) *ChatMessage {
+	return &ChatMessage{make(chan struct{}, 1), sender, content}
 }
 
 func (m *ChatMessage) Ack() {
@@ -118,7 +118,7 @@ func NewMessagePipe() (send chan<- *ChatMessage, receive <-chan *ChatMessage) {
 	return res, res
 }
 
-func (hub *Hub) BroadcastMessageWithTimeout(content string, sender *UserCredentials) Response {
+func (hub *Hub) BroadcastMessageWithTimeout(content string, sender Username) Response {
 	hub.activeUsersLock.RLock()
 	totalToSendTo := len(hub.activeUsers) - 1
 	if totalToSendTo == 0 {
@@ -130,7 +130,7 @@ func (hub *Hub) BroadcastMessageWithTimeout(content string, sender *UserCredenti
 	defer cancel()
 
 	for _, client := range hub.activeUsers {
-		if *client.Creds == *sender {
+		if client.Creds.Name == sender {
 			continue
 		}
 		go func(handler *ClientHandler) {
@@ -159,7 +159,7 @@ func (hub *Hub) BroadcastMessageWithTimeout(content string, sender *UserCredenti
 var ErrSendingTimedOut = errors.New("couldn't forward message to client: timed out")
 
 func sendMessageToClient(recipient *ClientHandler, content string,
-	sender *UserCredentials, ctx context.Context) error {
+	sender Username, ctx context.Context) error {
 	msg := NewChatMessage(sender, content)
 	select {
 	case <-ctx.Done():

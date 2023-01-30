@@ -101,7 +101,7 @@ func (client *ClientRoutineController) RegisterWait(user *UserCredentials, t *te
 	if err != nil {
 		t.Error(err)
 	}
-	expect(clientOut, "Logged in as "+client.user.Name, t)
+	expect(clientOut, "Logged in as "+string(client.user.Name), t)
 	expect(clientOut, "", t)
 }
 

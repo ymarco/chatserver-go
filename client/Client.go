@@ -363,14 +363,15 @@ func promptForUsernameAndPassword(userInput <-chan ReadOutput, out io.Writer) (*
 	if password.Val == "" {
 		return nil, ErrEmptyUsernameOrPassword
 	}
-	return &UserCredentials{Name: username.Val, Password: password.Val}, nil
+	return &UserCredentials{Name: Username(username.Val),
+		Password: Password(password.Val)}, nil
 }
 
 func (client *UnauthenticatedClient) authenticate(action AuthAction, creds *UserCredentials) (error, Response) {
 	_, err := client.serverInput.Write([]byte(
 		string(action) + "\n" +
-			creds.Name + "\n" +
-			creds.Password + "\n"))
+			string(creds.Name) + "\n" +
+			string(creds.Password) + "\n"))
 	if err != nil {
 		return err, ResponseIoErrorOccurred
 	}
