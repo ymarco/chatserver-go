@@ -144,7 +144,11 @@ func (handler *ClientHandler) sendMsgsLoop(ctx context.Context) {
 				handler.errs <- input.Err
 				return
 			}
-			handler.dispatchUserInputAsync(input.Val)
+			err := handler.dispatchUserInput(input.Val)
+			if err!=nil {
+				handler.errs<-err
+				return
+			}
 		}
 	}
 }
@@ -167,15 +171,6 @@ func parseInputMsg(input string) (id MsgID, msg string, ok bool) {
 	return id, msg, true
 }
 
-func (handler *ClientHandler) dispatchUserInputAsync(input string) {
-	go func() {
-		err := handler.dispatchUserInput(input)
-		if err != nil {
-			handler.errs <- err
-			return
-		}
-	}()
-}
 func (handler *ClientHandler) dispatchUserInput(input string) error {
 	id, msg, ok := parseInputMsg(input)
 	if !ok {
@@ -190,7 +185,6 @@ func (handler *ClientHandler) dispatchUserInput(input string) error {
 		}
 		return handler.runUserCommand(cmd)
 	} else {
-
 		response := handler.hub.BroadcastMessageWithTimeout(msg, handler.Creds.Name)
 		return handler.forwardResponseToUser(id, response)
 	}

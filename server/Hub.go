@@ -96,9 +96,9 @@ func (hub *Hub) Logout(name Username) {
 }
 
 type ChatMessage struct {
-	finished     chan struct{}
-	sender  Username
-	content string
+	finished chan struct{}
+	sender   Username
+	content  string
 }
 
 func NewChatMessage(sender Username, content string) *ChatMessage {
