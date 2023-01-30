@@ -215,7 +215,7 @@ func (handler *ClientHandler) forwardMsgToUser(msg *ChatMessage) {
 		handler.errs <- err
 		return
 	}
-	msg.Ack()
+	msg.Finish()
 	return
 }
 

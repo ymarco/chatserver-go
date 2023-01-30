@@ -96,7 +96,7 @@ func (hub *Hub) Logout(name Username) {
 }
 
 type ChatMessage struct {
-	ack     chan struct{}
+	finished     chan struct{}
 	sender  Username
 	content string
 }
@@ -105,13 +105,13 @@ func NewChatMessage(sender Username, content string) *ChatMessage {
 	return &ChatMessage{make(chan struct{}, 1), sender, content}
 }
 
-func (m *ChatMessage) Ack() {
+func (m *ChatMessage) Finish() {
 	// shouldn't block, since the channel has size 1
-	m.ack <- struct{}{}
+	m.finished <- struct{}{}
 }
 
 func (m *ChatMessage) WaitForAck() {
-	<-m.ack
+	<-m.finished
 }
 
 func NewMessagePipe() (send chan<- *ChatMessage, receive <-chan *ChatMessage) {
@@ -170,7 +170,7 @@ func sendMessageToClient(recipient *ClientHandler, content string,
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-msg.ack:
+	case <-msg.finished:
 	}
 	return nil
 }
