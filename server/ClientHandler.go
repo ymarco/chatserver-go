@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -80,7 +81,11 @@ func (hub *Hub) HandleNewConnection(conn net.Conn) {
 	}
 	defer hub.Logout(handler.Creds.Name)
 
-	err = handler.handleMessagesLoop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go handler.sendMsgsLoop(ctx)
+	go handler.receivePendingMsgsLoop(ctx)
+	err = <-handler.errs
 	if err != ErrClientHasQuit {
 		log.Println(err)
 	}
@@ -116,32 +121,32 @@ func (handler *ClientHandler) forwardResponseToUser(id MsgID, r Response) error 
 	return forwardResponseToUser(handler.conn, id, r)
 }
 
-func (handler *ClientHandler) handleMessagesLoop() error {
-	userInput := ReadAsyncIntoChan(bufio.NewScanner(handler.conn))
-
+func (handler *ClientHandler) receivePendingMsgsLoop(ctx context.Context) {
 	for {
 		select {
-		case input := <-userInput:
-			if input.Err != nil {
-				return input.Err
-			}
-			handler.dispatchUserInputAsync(input.Val)
-		case err := <-handler.errs:
-			return err
+		case <-ctx.Done():
+			return
 		case msg := <-handler.pendingMsgs:
-			handler.forwardMsgToUserAsync(msg)
+			handler.forwardMsgToUser(msg)
 		}
 	}
 }
 
-func (handler *ClientHandler) forwardMsgToUserAsync(msg *ChatMessage) {
-	go func() {
-		err := handler.forwardMsgToUser(msg)
-		if err != nil {
-			handler.errs <- err
+func (handler *ClientHandler) sendMsgsLoop(ctx context.Context) {
+	userInput := ReadAsyncIntoChan(bufio.NewScanner(handler.conn))
+
+	for {
+		select {
+		case <-ctx.Done():
 			return
+		case input := <-userInput:
+			if input.Err != nil {
+				handler.errs <- input.Err
+				return
+			}
+			handler.dispatchUserInputAsync(input.Val)
 		}
-	}()
+	}
 }
 
 func isCommand(s string) bool {
@@ -197,20 +202,21 @@ func (handler *ClientHandler) runUserCommand(cmd Cmd) error {
 		handler.hub.Logout(handler.Creds.Name)
 		return handler.forwardCmdToUser(LogoutCmd)
 	default:
-		msg := NewChatMessage(Username("server"), "Invalid command")
-		return handler.forwardMsgToUser(msg)
+		// TODO
+		return nil
 	}
 }
 
-func (handler *ClientHandler) forwardMsgToUser(msg *ChatMessage) error {
+func (handler *ClientHandler) forwardMsgToUser(msg *ChatMessage) {
 	_, err := handler.conn.Write([]byte(MsgPrefix + string(msg.sender) + ": " +
 		msg.content + "\n"))
 
 	if err != nil {
-		return err
+		handler.errs <- err
+		return
 	}
 	msg.Ack()
-	return nil
+	return
 }
 
 const cmdPrefix = "/"
