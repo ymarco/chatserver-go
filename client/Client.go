@@ -117,9 +117,13 @@ func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io
 	}
 	fmt.Fprintf(out, "Logged in as %s\n\n", me.creds.Name)
 
-	go me.handleResponsesLoop() // should return once we close serverInput since
-	// read would produce an error
-	err = me.handleClientMessagesLoop()
+	// all of these should return once we close serverInput, since read would
+	// produce an error and the splitter would close the channels
+	go me.handleResponsesLoop()
+	go me.sendMsgsLoop()
+	go me.receiveMsgsLoop()
+	go me.receiveServerCmdsLoop()
+	err = <-me.errs
 	switch err {
 	case nil:
 		panic("unreachable, mainClientLoop should return only on error")
@@ -204,27 +208,32 @@ func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 	}
 }
 
-func (client *Client) handleClientMessagesLoop() error {
-	for {
-		select {
-		case err := <-client.errs:
-			return err
-		case cmd := <-client.receiveCmd:
-			go client.runCmd(cmd)
-		case msg := <-client.receiveMsg:
-			fmt.Fprintln(client.userOutput, msg)
-		case line := <-client.userInput:
-			if line.Err != nil {
-				if line.Err == ErrClientHasQuit {
-					return ErrClientHasQuitExtinguished
-				}
-				return line.Err
-			}
-			go client.sendMsgExpectResponseTimeout(line.Val)
-		}
+func (client *Client) receiveServerCmdsLoop() {
+	for cmd := range client.receiveCmd {
+		client.runCmd(cmd)
+	}
+
+}
+func (client *Client) receiveMsgsLoop() {
+	for msg := range client.receiveMsg {
+		fmt.Fprintln(client.userOutput, msg)
 	}
 }
-func (client *Client) sendMsgExpectResponseTimeout(msgContent string) {
+
+func (client *Client) sendMsgsLoop() {
+	for line := range client.userInput {
+		if line.Err != nil {
+			if line.Err == ErrClientHasQuit {
+				client.errs <- ErrClientHasQuitExtinguished
+				return
+			}
+			client.errs <- line.Err
+			return
+		}
+		client.sendMsgExpectAsyncResponse(line.Val)
+	}
+}
+func (client *Client) sendMsgExpectAsyncResponse(msgContent string) {
 	id := getUniqueID()
 
 	ack := client.insertExpectedResponseId(id)
@@ -233,7 +242,7 @@ func (client *Client) sendMsgExpectResponseTimeout(msgContent string) {
 		client.errs <- err
 		return
 	}
-	expectResponseFromChanWithTimeout(id, ack, ResponseOk)
+	go expectResponseFromChanWithTimeout(id, ack, ResponseOk)
 }
 
 var globalID int64 = 0
