@@ -14,10 +14,9 @@ validateClientOutput() {
       (assert (= (read-line) \"Logged in as $NAME\"))
       (assert (= (read-line) \"\"))
       (dotimes [i $MSGS_COUNT]
-        (let [r (read-line)]
-          (println r)
-          ;(assert (str/includes? r (str \": \" i)))
-        ))"
+        ;(println (read-line))
+        (assert (str/includes? (read-line) (str \": \" i)))
+      )"
 }
 loginAndSendMsgs() {
   NAME="$1"
