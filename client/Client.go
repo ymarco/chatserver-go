@@ -274,11 +274,18 @@ const QuitCmd Cmd = "quit"
 func (client *Client) dispatchCmd(cmd Cmd) {
 	switch cmd {
 	case QuitCmd:
-		client.sendMsgWithTimeout("", cmd.Serialize())
+		err := client.sendMsgWithTimeout("", cmd.Serialize())
+		if err != nil {
+			client.errs <- err
+		}
 		// no waiting for response
 		client.relog <- struct{}{}
 	default:
-		client.userOutput.Write([]byte("Unknown command"))
+		_, err := client.userOutput.Write([]byte("Unknown command"))
+		if err != nil {
+			client.errs <- err
+			return
+		}
 	}
 }
 
