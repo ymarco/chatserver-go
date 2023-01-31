@@ -53,15 +53,19 @@ func ParseServerResponse(s string) (ServerResponse, bool) {
 
 type Cmd string
 
+const CmdPrefix = "/"
+
 func IsCmd(s string) bool {
-	return strings.HasPrefix(s, "/")
+	return strings.HasPrefix(s, CmdPrefix)
 }
-func ToCmd(s string) Cmd {
+func UnserializeStrToCmd(s string) Cmd {
 	return Cmd(s[1:])
+}
+func (cmd Cmd) Serialize() string {
+	return CmdPrefix + string(cmd)
 }
 
 var ErrServerLoggedUsOut = errors.New("server logged us out")
-var ErrUnknownCommand = errors.New("unknown command")
 
 var ErrOddOutput = errors.New("unexpected output from server")
 var ResponseUnknown Response = "unexpected output from server"

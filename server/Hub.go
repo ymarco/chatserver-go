@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"log"
 	"net"
 	"sync"
@@ -157,8 +156,6 @@ func (hub *Hub) BroadcastMessageWithTimeout(content string, sender Username) Res
 		return ResponseOk
 	}
 }
-
-var ErrSendingTimedOut = errors.New("couldn't forward message to client: timed out")
 
 func sendMessageToClient(recipient *ClientHandler, content string,
 	sender Username, ctx context.Context) error {

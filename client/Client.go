@@ -32,7 +32,6 @@ type UnauthenticatedClient struct {
 
 	receiveResponse <-chan ServerResponse
 	receiveMsg      <-chan string
-	receiveCmd      <-chan Cmd
 	serverInput     io.Writer
 
 	pendingAcks     map[MsgID]chan<- Response
@@ -46,6 +45,7 @@ type UnauthenticatedClient struct {
 type Client struct {
 	UnauthenticatedClient
 	creds *UserCredentials
+	relog chan struct{}
 }
 
 func parseIncomingMsg(s string) (msg string, ok bool) {
@@ -59,16 +59,13 @@ func parseIncomingMsg(s string) (msg string, ok bool) {
 func splitServerOutputAsync(output io.Reader, errs chan<- error) (
 	responses_ <-chan ServerResponse,
 	msgs_ <-chan string,
-	cmds_ <-chan Cmd,
 ) {
 	scanner := bufio.NewScanner(output)
 	responses := make(chan ServerResponse, 128)
 	msgs := make(chan string, 128)
-	cmds := make(chan Cmd, 128)
 	go func() {
 		defer close(responses)
 		defer close(msgs)
-		defer close(cmds)
 		for {
 			str, err := ScanLine(scanner)
 			if err != nil {
@@ -79,14 +76,12 @@ func splitServerOutputAsync(output io.Reader, errs chan<- error) (
 				responses <- serverResponse
 			} else if msg, ok := parseIncomingMsg(str); ok {
 				msgs <- msg
-			} else if IsCmd(str) {
-				cmds <- ToCmd(str)
 			} else {
 				fmt.Printf("odd output from server: %s\n", str)
 			}
 		}
 	}()
-	return responses, msgs, cmds
+	return responses, msgs
 }
 
 func startSession(port string, userInput <-chan ReadOutput, out io.Writer) *UnauthenticatedClient {
@@ -96,12 +91,11 @@ func startSession(port string, userInput <-chan ReadOutput, out io.Writer) *Unau
 	}
 	log.Printf("Connected to %s\n", serverConn.RemoteAddr())
 	errs := make(chan error, 128)
-	responses, msgs, cmds := splitServerOutputAsync(serverConn, errs)
+	responses, msgs := splitServerOutputAsync(serverConn, errs)
 	serverInput := serverConn.(io.Writer)
 	pendingAcks := make(map[MsgID]chan<- Response)
 
-	return &UnauthenticatedClient{errs, responses, msgs, cmds,
-		serverInput, pendingAcks, &sync.Mutex{}, userInput, out}
+	return &UnauthenticatedClient{errs, responses, msgs, serverInput, pendingAcks, &sync.Mutex{}, userInput, out}
 }
 
 func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io.Writer) (shouldReconnect bool) {
@@ -135,24 +129,23 @@ func (unauthedClient *UnauthenticatedClient) runUntilLoggedOut() (
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go me.handleResponsesLoop(ctx)
-	go me.sendMsgsLoop(ctx)
+	go me.handleUserInputLoop(ctx)
 	go me.receiveMsgsLoop(ctx)
-	go me.receiveServerCmdsLoop(ctx)
-	err = <-me.errs
-	switch err {
-	case nil:
-		panic("unreachable, mainClientLoop should return only on error")
-	case ErrServerLoggedUsOut:
+	select {
+	case <-me.relog:
 		return true, true
-	case ErrClientHasQuitExtinguished:
-		return false, false
-	case io.EOF, ErrServerTimedOut, net.ErrClosed:
-		log.Println("Server closed, retrying in 5 seconds")
-		time.Sleep(5 * time.Second)
-		return false, true
-	default:
-		log.Println(err)
-		return false, false
+	case err := <-me.errs:
+		switch err {
+		case nil:
+			panic("unreachable, mainClientLoop should return only on error")
+		case io.EOF, ErrServerTimedOut, net.ErrClosed:
+			log.Println("Server closed, retrying in 5 seconds")
+			time.Sleep(5 * time.Second)
+			return false, true
+		default:
+			log.Println(err)
+			return false, false
+		}
 	}
 }
 
@@ -229,21 +222,6 @@ func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 	}
 }
 
-func (client *Client) receiveServerCmdsLoop(ctx context.Context) {
-	for {
-		select {
-		case cmd, ok := <-client.receiveCmd:
-			if !ok {
-				return
-			}
-			client.runCmd(cmd)
-		case <-ctx.Done():
-			return
-
-		}
-	}
-
-}
 func (client *Client) receiveMsgsLoop(ctx context.Context) {
 	for {
 		select {
@@ -256,10 +234,9 @@ func (client *Client) receiveMsgsLoop(ctx context.Context) {
 			return
 		}
 	}
-
 }
 
-func (client *Client) sendMsgsLoop(ctx context.Context) {
+func (client *Client) handleUserInputLoop(ctx context.Context) {
 	for {
 		select {
 		case line, ok := <-client.userInput:
@@ -274,12 +251,30 @@ func (client *Client) sendMsgsLoop(ctx context.Context) {
 				client.errs <- line.Err
 				return
 			}
-			client.sendMsgExpectAsyncResponse(line.Val)
+			if IsCmd(line.Val) {
+				client.dispatchCmd(UnserializeToCmd(line.Val))
+			} else {
+				client.sendMsgExpectAsyncResponse(line.Val)
+			}
 		case <-ctx.Done():
 			return
 		}
 	}
 }
+
+const QuitCmd Cmd = "quit"
+
+func (client *Client) dispatchCmd(cmd Cmd) {
+	switch cmd {
+	case QuitCmd:
+		client.sendMsgWithTimeout("", cmd.Serialize())
+		// no waiting for response
+		client.relog <- struct{}{}
+	default:
+		client.userOutput.Write([]byte("Unknown command"))
+	}
+}
+
 func (client *Client) sendMsgExpectAsyncResponse(msgContent string) {
 	id := getUniqueID()
 
@@ -378,7 +373,8 @@ func (client *UnauthenticatedClient) authenticateWithServer(creds *UserCredentia
 		fmt.Fprintln(client.userOutput, response)
 		return nil, ErrInvalidAuth
 	}
-	me := &Client{*client, creds}
+	relog := make(chan struct{})
+	me := &Client{*client, creds, relog}
 	return me, nil
 }
 

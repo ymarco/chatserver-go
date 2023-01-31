@@ -16,6 +16,7 @@ type ClientHandler struct {
 	pendingMsgs <-chan *ChatMessage
 	SendMsg     chan<- *ChatMessage
 	errs        chan error
+	relog       chan struct{}
 	Creds       *UserCredentials
 	clientIn    io.Writer
 	clientOut   <-chan ReadOutput
@@ -67,7 +68,9 @@ func acceptAuthRequest(clientIn io.Writer, clientOut <-chan ReadOutput) (*AuthRe
 func (hub *Hub) newClientHandler(r *AuthRequest) *ClientHandler {
 	sendMsg, receiveMsg := NewMessagePipe()
 	errs := make(chan error, 128)
-	return &ClientHandler{receiveMsg, sendMsg, errs, r.creds, r.clientIn, r.clientOut, hub}
+	relog := make(chan struct{}, 1)
+	return &ClientHandler{receiveMsg, sendMsg, errs, relog,
+		r.creds, r.clientIn, r.clientOut, hub}
 }
 func (handler *ClientHandler) Close() error {
 	close(handler.SendMsg)
@@ -99,22 +102,23 @@ func (hub *Hub) handleUntilLoggedOut(clientOut io.Writer, clientIn <-chan ReadOu
 	defer cancel()
 	go handler.sendMsgsLoop(ctx)
 	go handler.receivePendingMsgsLoop(ctx)
-	err = <-handler.errs
-	if err == ErrClientLoggedOut {
+	select {
+	case <-handler.relog:
 		return true
-	} else if err == ErrClientHasQuit {
-		return false
-	} else if err != nil {
-		fmt.Println(err)
-		return false
-	} else {
-		panic("unreachable")
+	case err := <-handler.errs:
+		if err == ErrClientHasQuit {
+			return false
+		} else if err != nil {
+			fmt.Println(err)
+			return false
+		} else {
+			panic("unreachable")
+		}
 	}
 }
 
 func acceptAuthRetry(clientIn io.Writer, clientOut <-chan ReadOutput, hub *Hub) (*ClientHandler, error) {
 	for {
-		fmt.Println("Accept auth retry")
 		request, err := acceptAuthRequest(clientIn, clientOut)
 		if err != nil {
 			return nil, err
@@ -173,10 +177,6 @@ func (handler *ClientHandler) sendMsgsLoop(ctx context.Context) {
 	}
 }
 
-func isCommand(s string) bool {
-	return strings.HasPrefix(s, cmdPrefix)
-}
-
 func parseInputMsg(input string) (id MsgID, msg string, ok bool) {
 	if !strings.HasPrefix(input, MsgPrefix) {
 		return "", "", false
@@ -197,13 +197,8 @@ func (handler *ClientHandler) dispatchUserInput(input string) error {
 		return ErrOddOutput
 	}
 
-	if isCommand(msg) {
-		cmd := ToCmd(msg)
-		err := handler.forwardResponseToUser(id, ResponseOk)
-		if err != nil {
-			return err
-		}
-		return handler.runUserCommand(cmd)
+	if IsCmd(msg) {
+		return handler.dispatchCmd(UnserializeStrToCmd(msg))
 	} else {
 		response := handler.hub.BroadcastMessageWithTimeout(msg, handler.Creds.Name)
 		return handler.forwardResponseToUser(id, response)
@@ -212,11 +207,11 @@ func (handler *ClientHandler) dispatchUserInput(input string) error {
 
 var ErrClientLoggedOut = errors.New("Client logged out")
 
-func (handler *ClientHandler) runUserCommand(cmd Cmd) error {
+func (handler *ClientHandler) dispatchCmd(cmd Cmd) error {
 	switch cmd {
 	case LogoutCmd:
-		handler.errs <- ErrClientLoggedOut
-		return handler.forwardCmdToUser(LogoutCmd)
+		handler.relog <- struct{}{}
+		return nil
 	default:
 		// TODO
 		return nil
@@ -233,11 +228,4 @@ func (handler *ClientHandler) forwardMsgToUser(msg *ChatMessage) {
 	}
 	msg.Finish()
 	return
-}
-
-const cmdPrefix = "/"
-
-func (handler *ClientHandler) forwardCmdToUser(cmd Cmd) error {
-	_, err := handler.clientIn.Write([]byte(cmdPrefix + string(cmd) + "\n"))
-	return err
 }
