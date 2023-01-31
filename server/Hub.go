@@ -90,6 +90,7 @@ func (hub *Hub) logClientIn(request *AuthRequest) *ClientHandler {
 func (hub *Hub) Logout(name Username) {
 	hub.activeUsersLock.Lock()
 	defer hub.activeUsersLock.Unlock()
+
 	ClosePrintErr(hub.activeUsers[name])
 	delete(hub.activeUsers, name)
 	log.Printf("Logged out: %s\n", name)

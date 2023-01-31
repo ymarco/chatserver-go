@@ -2,6 +2,7 @@ package client
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -20,9 +21,9 @@ import (
 func RunClient(port string, in io.Reader, out io.Writer) {
 	userInput := ReadAsyncIntoChan(bufio.NewScanner(in))
 
-	shouldRetry := true
-	for shouldRetry {
-		shouldRetry = runClientUntilDisconnected(port, userInput, out)
+	shouldReconnect := true
+	for shouldReconnect {
+		shouldReconnect = runClientUntilDisconnected(port, userInput, out)
 	}
 }
 
@@ -103,49 +104,69 @@ func startSession(port string, userInput <-chan ReadOutput, out io.Writer) *Unau
 		serverInput, pendingAcks, &sync.Mutex{}, userInput, out}
 }
 
-func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io.Writer) (shouldRetry bool) {
+func runClientUntilDisconnected(port string, userInput <-chan ReadOutput, out io.Writer) (shouldReconnect bool) {
 	log.SetOutput(out)
 	unauthedClient := startSession(port, userInput, out)
 	defer ClosePrintErr(unauthedClient.serverInput.(net.Conn))
+
+	shouldRelog := true
+	for shouldRelog {
+		shouldRelog, shouldReconnect = unauthedClient.runUntilLoggedOut()
+	}
+
+	return shouldReconnect
+}
+
+func (unauthedClient *UnauthenticatedClient) runUntilLoggedOut() (
+	shouldRelog bool,
+	shouldReconnect bool,
+) {
 	me, err := authenticateWithRetry(unauthedClient)
 	if err != nil {
 		if err == io.EOF {
-			fmt.Fprintln(out, "Server closed, retrying")
-			return true
+			fmt.Fprintln(unauthedClient.userOutput, "Server closed, retrying")
+			return true, true
 		}
 		log.Fatalln(err)
 	}
-	fmt.Fprintf(out, "Logged in as %s\n\n", me.creds.Name)
+	fmt.Fprintf(unauthedClient.userOutput, "Logged in as %s\n\n", me.creds.Name)
+	defer log.Println("Logged out")
 
-	// all of these should return once we close serverInput, since read would
-	// produce an error and the splitServerOutputAsync would close the channels
-	go me.handleResponsesLoop()
-	go me.sendMsgsLoop()
-	go me.receiveMsgsLoop()
-	go me.receiveServerCmdsLoop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go me.handleResponsesLoop(ctx)
+	go me.sendMsgsLoop(ctx)
+	go me.receiveMsgsLoop(ctx)
+	go me.receiveServerCmdsLoop(ctx)
 	err = <-me.errs
 	switch err {
 	case nil:
 		panic("unreachable, mainClientLoop should return only on error")
 	case ErrServerLoggedUsOut:
-		log.Println("Logged out and disconnected. Reconnecting...")
-		return true
+		return true, true
 	case ErrClientHasQuitExtinguished:
-		return false
+		return false, false
 	case io.EOF, ErrServerTimedOut, net.ErrClosed:
 		log.Println("Server closed, retrying in 5 seconds")
 		time.Sleep(5 * time.Second)
-		return true
+		return false, true
 	default:
-		log.Fatalln(err)
+		log.Println(err)
+		return false, false
 	}
-
-	return false // unreachable
 }
 
-func (client *Client) handleResponsesLoop() {
-	for sResponse := range client.receiveResponse {
-		client.handleIncomingResponse(sResponse)
+func (client *Client) handleResponsesLoop(ctx context.Context) {
+	for {
+		select {
+		case serverResponse, ok := <-client.receiveResponse:
+			if !ok {
+				return
+			}
+			client.handleIncomingResponse(serverResponse)
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
@@ -208,29 +229,55 @@ func connectToPortWithRetry(port string, out io.Writer) (net.Conn, error) {
 	}
 }
 
-func (client *Client) receiveServerCmdsLoop() {
-	for cmd := range client.receiveCmd {
-		client.runCmd(cmd)
-	}
-
-}
-func (client *Client) receiveMsgsLoop() {
-	for msg := range client.receiveMsg {
-		fmt.Fprintln(client.userOutput, msg)
-	}
-}
-
-func (client *Client) sendMsgsLoop() {
-	for line := range client.userInput {
-		if line.Err != nil {
-			if line.Err == ErrClientHasQuit {
-				client.errs <- ErrClientHasQuitExtinguished
+func (client *Client) receiveServerCmdsLoop(ctx context.Context) {
+	for {
+		select {
+		case cmd, ok := <-client.receiveCmd:
+			if !ok {
 				return
 			}
-			client.errs <- line.Err
+			client.runCmd(cmd)
+		case <-ctx.Done():
+			return
+
+		}
+	}
+
+}
+func (client *Client) receiveMsgsLoop(ctx context.Context) {
+	for {
+		select {
+		case msg, ok := <-client.receiveMsg:
+			if !ok {
+				return
+			}
+			fmt.Fprintln(client.userOutput, msg)
+		case <-ctx.Done():
 			return
 		}
-		client.sendMsgExpectAsyncResponse(line.Val)
+	}
+
+}
+
+func (client *Client) sendMsgsLoop(ctx context.Context) {
+	for {
+		select {
+		case line, ok := <-client.userInput:
+			if !ok {
+				return
+			}
+			if line.Err != nil {
+				if line.Err == ErrClientHasQuit {
+					client.errs <- ErrClientHasQuitExtinguished
+					return
+				}
+				client.errs <- line.Err
+				return
+			}
+			client.sendMsgExpectAsyncResponse(line.Val)
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 func (client *Client) sendMsgExpectAsyncResponse(msgContent string) {

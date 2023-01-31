@@ -3,7 +3,9 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"strings"
@@ -15,14 +17,16 @@ type ClientHandler struct {
 	SendMsg     chan<- *ChatMessage
 	errs        chan error
 	Creds       *UserCredentials
-	conn        net.Conn
+	clientIn    io.Writer
+	clientOut   <-chan ReadOutput
 	hub         *Hub
 }
 
 type AuthRequest struct {
-	authType AuthAction
-	conn     net.Conn
-	creds    *UserCredentials
+	authType  AuthAction
+	clientIn  io.Writer
+	clientOut <-chan ReadOutput
+	creds     *UserCredentials
 }
 
 func strToAuthAction(str string) (AuthAction, error) {
@@ -36,48 +40,58 @@ func strToAuthAction(str string) (AuthAction, error) {
 	}
 }
 
-func acceptAuthRequest(clientConn net.Conn) (*AuthRequest, error) {
-	clientOutput := bufio.NewScanner(clientConn)
-	choice, err := ScanLine(clientOutput)
-	if err != nil {
-		return nil, err
+func acceptAuthRequest(clientIn io.Writer, clientOut <-chan ReadOutput) (*AuthRequest, error) {
+	choice := <-clientOut
+	if choice.Err != nil {
+		return nil, choice.Err
 	}
-	action, err := strToAuthAction(choice)
-	if err != nil {
-		return nil, err
-	}
-
-	username, err := ScanLine(clientOutput)
+	action, err := strToAuthAction(choice.Val)
 	if err != nil {
 		return nil, err
 	}
 
-	password, err := ScanLine(clientOutput)
-	if err != nil {
-		return nil, err
+	username := <-clientOut
+	if username.Err != nil {
+		return nil, username.Err
 	}
 
-	return &AuthRequest{action, clientConn, &UserCredentials{Name: Username(username), Password: Password(password)}}, nil
+	password := <-clientOut
+	if password.Err != nil {
+		return nil, password.Err
+	}
+
+	return &AuthRequest{action, clientIn, clientOut,
+		&UserCredentials{Name: Username(username.Val),
+			Password: Password(password.Val)}}, nil
 }
 func (hub *Hub) newClientHandler(r *AuthRequest) *ClientHandler {
 	sendMsg, receiveMsg := NewMessagePipe()
 	errs := make(chan error, 128)
-	return &ClientHandler{receiveMsg, sendMsg, errs, r.creds, r.conn, hub}
+	return &ClientHandler{receiveMsg, sendMsg, errs, r.creds, r.clientIn, r.clientOut, hub}
 }
 func (handler *ClientHandler) Close() error {
 	close(handler.SendMsg)
-	return handler.conn.Close()
+	return nil
 }
 
 func (hub *Hub) HandleNewConnection(conn net.Conn) {
+	defer ClosePrintErr(conn)
 	defer log.Printf("Disconnected: %s\n", conn.RemoteAddr())
-	handler, err := acceptAuthRetry(conn, hub)
+
+	clientIn := ReadAsyncIntoChan(bufio.NewScanner(conn))
+	shouldRelog := true
+	for shouldRelog {
+		shouldRelog = hub.handleUntilLoggedOut(conn, clientIn)
+	}
+}
+
+func (hub *Hub) handleUntilLoggedOut(clientOut io.Writer, clientIn <-chan ReadOutput) (expectedToRelog bool) {
+	handler, err := acceptAuthRetry(clientOut, clientIn, hub)
 	if err != nil {
 		if err == ErrClientHasQuit {
-			return
+			return false
 		}
-		log.Printf("Err with %s: %s", handler.Creds.Name, err)
-		return
+		return false
 	}
 	defer hub.Logout(handler.Creds.Name)
 
@@ -86,14 +100,22 @@ func (hub *Hub) HandleNewConnection(conn net.Conn) {
 	go handler.sendMsgsLoop(ctx)
 	go handler.receivePendingMsgsLoop(ctx)
 	err = <-handler.errs
-	if err != ErrClientHasQuit {
-		log.Println(err)
+	if err == ErrClientLoggedOut {
+		return true
+	} else if err == ErrClientHasQuit {
+		return false
+	} else if err != nil {
+		fmt.Println(err)
+		return false
+	} else {
+		panic("unreachable")
 	}
 }
 
-func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*ClientHandler, error) {
+func acceptAuthRetry(clientIn io.Writer, clientOut <-chan ReadOutput, hub *Hub) (*ClientHandler, error) {
 	for {
-		request, err := acceptAuthRequest(clientConn)
+		fmt.Println("Accept auth retry")
+		request, err := acceptAuthRequest(clientIn, clientOut)
 		if err != nil {
 			return nil, err
 		}
@@ -104,7 +126,7 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*ClientHandler, error) {
 		}
 
 		// try to communicate that we're retrying
-		err = forwardResponseToUser(clientConn, "", response)
+		err = forwardResponseToUser(clientIn, "", response)
 		if err != nil {
 			log.Printf("Error with %s: %s\n", handler.Creds.Name, err)
 			return nil, err
@@ -112,13 +134,13 @@ func acceptAuthRetry(clientConn net.Conn, hub *Hub) (*ClientHandler, error) {
 	}
 }
 
-func forwardResponseToUser(conn net.Conn, id MsgID, r Response) error {
-	_, err := conn.Write([]byte(ServerResponsePrefix + string(id) +
+func forwardResponseToUser(clientIn io.Writer, id MsgID, r Response) error {
+	_, err := clientIn.Write([]byte(ServerResponsePrefix + string(id) +
 		IdSeparator + string(r) + "\n"))
 	return err
 }
 func (handler *ClientHandler) forwardResponseToUser(id MsgID, r Response) error {
-	return forwardResponseToUser(handler.conn, id, r)
+	return forwardResponseToUser(handler.clientIn, id, r)
 }
 
 func (handler *ClientHandler) receivePendingMsgsLoop(ctx context.Context) {
@@ -133,20 +155,18 @@ func (handler *ClientHandler) receivePendingMsgsLoop(ctx context.Context) {
 }
 
 func (handler *ClientHandler) sendMsgsLoop(ctx context.Context) {
-	userInput := ReadAsyncIntoChan(bufio.NewScanner(handler.conn))
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case input := <-userInput:
+		case input := <-handler.clientOut:
 			if input.Err != nil {
 				handler.errs <- input.Err
 				return
 			}
 			err := handler.dispatchUserInput(input.Val)
-			if err!=nil {
-				handler.errs<-err
+			if err != nil {
+				handler.errs <- err
 				return
 			}
 		}
@@ -190,10 +210,12 @@ func (handler *ClientHandler) dispatchUserInput(input string) error {
 	}
 }
 
+var ErrClientLoggedOut = errors.New("Client logged out")
+
 func (handler *ClientHandler) runUserCommand(cmd Cmd) error {
 	switch cmd {
 	case LogoutCmd:
-		handler.hub.Logout(handler.Creds.Name)
+		handler.errs <- ErrClientLoggedOut
 		return handler.forwardCmdToUser(LogoutCmd)
 	default:
 		// TODO
@@ -202,7 +224,7 @@ func (handler *ClientHandler) runUserCommand(cmd Cmd) error {
 }
 
 func (handler *ClientHandler) forwardMsgToUser(msg *ChatMessage) {
-	_, err := handler.conn.Write([]byte(MsgPrefix + string(msg.sender) + ": " +
+	_, err := handler.clientIn.Write([]byte(MsgPrefix + string(msg.sender) + ": " +
 		msg.content + "\n"))
 
 	if err != nil {
@@ -216,6 +238,6 @@ func (handler *ClientHandler) forwardMsgToUser(msg *ChatMessage) {
 const cmdPrefix = "/"
 
 func (handler *ClientHandler) forwardCmdToUser(cmd Cmd) error {
-	_, err := handler.conn.Write([]byte(cmdPrefix + string(cmd) + "\n"))
+	_, err := handler.clientIn.Write([]byte(cmdPrefix + string(cmd) + "\n"))
 	return err
 }
