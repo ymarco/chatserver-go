@@ -28,7 +28,7 @@ loginAndSendMsgs() {
             (when (= (rem i 160) 0)
               (Thread/sleep 1))
             (println (str i)))
-          (Thread/sleep 200); finish receiving messages"
+          (Thread/sleep 500); finish receiving messages"
 }
 
 client() {
