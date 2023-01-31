@@ -3,7 +3,6 @@ package server
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +11,10 @@ import (
 	. "util"
 )
 
+type Broadcaster interface {
+	BroadcastMessageWithTimeout(content string, sender Username) Response
+}
+
 type ClientHandler struct {
 	pendingMsgs <-chan *ChatMessage
 	SendMsg     chan<- *ChatMessage
@@ -19,14 +22,14 @@ type ClientHandler struct {
 	relog       chan struct{}
 	Creds       *UserCredentials
 	clientIn    io.Writer
-	clientOut   <-chan ReadOutput
-	hub         *Hub
+	clientOut   <-chan ReadInput
+	broadcaster Broadcaster
 }
 
 type AuthRequest struct {
 	authType  AuthAction
 	clientIn  io.Writer
-	clientOut <-chan ReadOutput
+	clientOut <-chan ReadInput
 	creds     *UserCredentials
 }
 
@@ -41,7 +44,7 @@ func strToAuthAction(str string) (AuthAction, error) {
 	}
 }
 
-func acceptAuthRequest(clientIn io.Writer, clientOut <-chan ReadOutput) (*AuthRequest, error) {
+func acceptAuthRequest(clientIn io.Writer, clientOut <-chan ReadInput) (*AuthRequest, error) {
 	choice := <-clientOut
 	if choice.Err != nil {
 		return nil, choice.Err
@@ -65,12 +68,12 @@ func acceptAuthRequest(clientIn io.Writer, clientOut <-chan ReadOutput) (*AuthRe
 		&UserCredentials{Name: Username(username.Val),
 			Password: Password(password.Val)}}, nil
 }
-func (hub *Hub) newClientHandler(r *AuthRequest) *ClientHandler {
+func newClientHandler(r *AuthRequest, broadcaster Broadcaster) *ClientHandler {
 	sendMsg, receiveMsg := NewMessagePipe()
 	errs := make(chan error, 128)
 	relog := make(chan struct{}, 1)
 	return &ClientHandler{receiveMsg, sendMsg, errs, relog,
-		r.creds, r.clientIn, r.clientOut, hub}
+		r.creds, r.clientIn, r.clientOut, broadcaster}
 }
 func (handler *ClientHandler) Close() error {
 	close(handler.SendMsg)
@@ -88,8 +91,8 @@ func (hub *Hub) HandleNewConnection(conn net.Conn) {
 	}
 }
 
-func (hub *Hub) handleUntilLoggedOut(clientOut io.Writer, clientIn <-chan ReadOutput) (expectedToRelog bool) {
-	handler, err := acceptAuthRetry(clientOut, clientIn, hub)
+func (hub *Hub) handleUntilLoggedOut(clientOut io.Writer, clientIn <-chan ReadInput) (expectedToRelog bool) {
+	handler, err := hub.acceptAuthRetry(clientOut, clientIn)
 	if err != nil {
 		if err == ErrClientHasQuit {
 			return false
@@ -117,7 +120,7 @@ func (hub *Hub) handleUntilLoggedOut(clientOut io.Writer, clientIn <-chan ReadOu
 	}
 }
 
-func acceptAuthRetry(clientIn io.Writer, clientOut <-chan ReadOutput, hub *Hub) (*ClientHandler, error) {
+func (hub *Hub) acceptAuthRetry(clientIn io.Writer, clientOut <-chan ReadInput) (*ClientHandler, error) {
 	for {
 		request, err := acceptAuthRequest(clientIn, clientOut)
 		if err != nil {
@@ -200,12 +203,10 @@ func (handler *ClientHandler) dispatchUserInput(input string) error {
 	if IsCmd(msg) {
 		return handler.dispatchCmd(UnserializeStrToCmd(msg))
 	} else {
-		response := handler.hub.BroadcastMessageWithTimeout(msg, handler.Creds.Name)
+		response := handler.broadcaster.BroadcastMessageWithTimeout(msg, handler.Creds.Name)
 		return handler.forwardResponseToUser(id, response)
 	}
 }
-
-var ErrClientLoggedOut = errors.New("Client logged out")
 
 func (handler *ClientHandler) dispatchCmd(cmd Cmd) error {
 	switch cmd {
@@ -213,7 +214,7 @@ func (handler *ClientHandler) dispatchCmd(cmd Cmd) error {
 		handler.relog <- struct{}{}
 		return nil
 	default:
-		// TODO
+		// TODO print err
 		return nil
 	}
 }

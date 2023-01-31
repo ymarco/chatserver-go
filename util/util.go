@@ -72,23 +72,23 @@ var ResponseUnknown Response = "unexpected output from server"
 
 var ErrClientHasQuit = io.EOF
 
-type ReadOutput struct {
+type ReadInput struct {
 	Val string
 	Err error
 }
 
-func ReadAsyncIntoChan(scanner *bufio.Scanner) <-chan ReadOutput {
-	outputs := make(chan ReadOutput)
+func ReadAsyncIntoChan(scanner *bufio.Scanner) <-chan ReadInput {
+	inputs := make(chan ReadInput)
 	go func() {
 		for {
-			s, err := ScanLine(scanner)
-			outputs <- ReadOutput{s, err}
+			str, err := ScanLine(scanner)
+			inputs <- ReadInput{str, err}
 			if err != nil {
 				return
 			}
 		}
 	}()
-	return outputs
+	return inputs
 }
 
 // ScanLine is a wrapper around Scanner.Scan() that returns EOF as errors
@@ -115,8 +115,8 @@ type UserCredentials struct {
 const MsgPrefix = "m"
 const IdSeparator = ";"
 
-const MsgSendTimeout = time.Millisecond * 200
-const MsgAckTimeout = time.Millisecond * 300
+const MsgSendTimeout = time.Millisecond * 3000
+const MsgAckTimeout = time.Millisecond * 4000
 
 const (
 	LogoutCmd Cmd = "quit"

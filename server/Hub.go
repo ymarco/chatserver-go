@@ -80,7 +80,7 @@ func (hub *Hub) logClientIn(request *AuthRequest) *ClientHandler {
 	hub.userDBLock.Lock()
 	defer hub.userDBLock.Unlock()
 
-	client := hub.newClientHandler(request)
+	client := newClientHandler(request, hub)
 	hub.userDB[client.Creds.Name] = client.Creds.Password
 	hub.activeUsers[client.Creds.Name] = client
 	log.Printf("Logged in: %s\n", client.Creds.Name)
@@ -110,13 +110,13 @@ func (m *ChatMessage) Finish() {
 	m.finished <- struct{}{}
 }
 
-func (m *ChatMessage) WaitForAck() {
+func (m *ChatMessage) WaitForFinish() {
 	<-m.finished
 }
 
 func NewMessagePipe() (send chan<- *ChatMessage, receive <-chan *ChatMessage) {
-	res := make(chan *ChatMessage)
-	return res, res
+	io := make(chan *ChatMessage)
+	return io, io
 }
 
 func (hub *Hub) BroadcastMessageWithTimeout(content string, sender Username) Response {
@@ -148,6 +148,7 @@ func (hub *Hub) BroadcastMessageWithTimeout(content string, sender Username) Res
 			succeeded++
 		}
 	}
+
 	if succeeded == 0 {
 		return ResponseMsgFailedForAll
 	} else if succeeded < totalToSendTo {
