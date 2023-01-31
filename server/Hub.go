@@ -114,11 +114,6 @@ func (m *ChatMessage) WaitForFinish() {
 	<-m.finished
 }
 
-func NewMessagePipe() (send chan<- *ChatMessage, receive <-chan *ChatMessage) {
-	io := make(chan *ChatMessage)
-	return io, io
-}
-
 func (hub *Hub) BroadcastMessageWithTimeout(content string, sender Username) Response {
 	hub.activeUsersLock.RLock()
 	totalToSendTo := len(hub.activeUsers) - 1

@@ -16,8 +16,7 @@ type Broadcaster interface {
 }
 
 type ClientHandler struct {
-	pendingMsgs <-chan *ChatMessage
-	SendMsg     chan<- *ChatMessage
+	SendMsg     chan *ChatMessage
 	errs        chan error
 	relog       chan struct{}
 	Creds       *UserCredentials
@@ -69,10 +68,10 @@ func acceptAuthRequest(clientIn io.Writer, clientOut <-chan ReadInput) (*AuthReq
 			Password: Password(password.Val)}}, nil
 }
 func newClientHandler(r *AuthRequest, broadcaster Broadcaster) *ClientHandler {
-	sendMsg, receiveMsg := NewMessagePipe()
 	errs := make(chan error, 128)
 	relog := make(chan struct{}, 1)
-	return &ClientHandler{receiveMsg, sendMsg, errs, relog,
+	sendMsg := make(chan *ChatMessage, 128)
+	return &ClientHandler{sendMsg, errs, relog,
 		r.creds, r.clientIn, r.clientOut, broadcaster}
 }
 func (handler *ClientHandler) Close() error {
@@ -155,7 +154,7 @@ func (handler *ClientHandler) receivePendingMsgsLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case msg := <-handler.pendingMsgs:
+		case msg := <-handler.SendMsg:
 			handler.forwardMsgToUser(msg)
 		}
 	}
