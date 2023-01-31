@@ -284,7 +284,7 @@ func (client *Client) sendMsgExpectAsyncResponse(msgContent string) {
 		client.errs <- err
 		return
 	}
-	go expectResponseFromChanWithTimeout(id, ack, ResponseOk)
+	go client.expectResponseFromChanWithTimeout(id, ack, ResponseOk)
 }
 
 var globalID int64 = 0
@@ -309,7 +309,7 @@ func (client *Client) removeExpectedResponseId(id MsgID) {
 	delete(client.pendingAcks, id)
 }
 
-func expectResponseFromChanWithTimeout(id MsgID, ack <-chan Response, expected Response) {
+func (client *Client) expectResponseFromChanWithTimeout(id MsgID, ack <-chan Response, expected Response) {
 	select {
 	case <-time.After(MsgAckTimeout):
 		log.Printf("Msg %s wasn't acked", id)
@@ -319,6 +319,7 @@ func expectResponseFromChanWithTimeout(id MsgID, ack <-chan Response, expected R
 			fmt.Printf("Response was unexpectedly %s\n", response)
 		}
 	}
+	client.removeExpectedResponseId(id)
 }
 
 func (client *Client) runCmd(cmd Cmd) {
