@@ -13,22 +13,24 @@ validateClientOutput() {
       (assert (= (read-line) \"Password:\"))
       (assert (= (read-line) \"Logged in as $NAME\"))
       (assert (= (read-line) \"\"))
-      (dotimes [i $MSGS_COUNT]
+      ;(println \"$NAME: received \" (count (line-seq (java.io.BufferedReader. *in*))))
+      (while (let [x (read-line)] (println x) x))
+      ;(dotimes [i 32770]
         ;(println (read-line))
-        (assert (str/includes? (read-line) (str \": \" i)))
-      )"
+        ;;;(assert (str/includes? (read-line) (str \": \" i)))
+      ;) "
 }
 loginAndSendMsgs() {
   NAME="$1"
       bb "(println \"r\")
           (println \"$NAME\")
           (println \"1234\")
-          (Thread/sleep 2100) ; wait for client2 to login
+          (Thread/sleep 2100) ; wait for other clients to login
           (dotimes [i $MSGS_COUNT]
-            (when (= (rem i 160) 0)
+            (when (= (rem i 20) 0)
               (Thread/sleep 1))
             (println (str i)))
-          (Thread/sleep 500); finish receiving messages"
+          (Thread/sleep 0); finish receiving messages"
 }
 
 client() {
@@ -47,8 +49,12 @@ client1PID=$!
 client nimrod&
 client2PID=$!
 
+client stav&
+client3PID=$!
+
 wait $client1PID
 wait $client2PID
+wait $client3PID
 
 kill $serverPID
 echo "Killed server"

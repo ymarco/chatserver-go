@@ -114,7 +114,7 @@ func (m *ChatMessage) WaitForFinish() {
 	<-m.finished
 }
 
-func (hub *Hub) BroadcastMessageWithTimeout(content string, sender Username) Response {
+func (hub *Hub) BroadcastMessage(content string, sender Username, ctx context.Context) Response {
 	hub.activeUsersLock.RLock()
 	totalToSendTo := len(hub.activeUsers) - 1
 	if totalToSendTo == 0 {
@@ -122,7 +122,7 @@ func (hub *Hub) BroadcastMessageWithTimeout(content string, sender Username) Res
 		return ResponseOk
 	}
 	errs := make(chan error, totalToSendTo)
-	ctx, cancel := context.WithTimeout(context.Background(), MsgSendTimeout)
+	ctx, cancel := context.WithTimeout(ctx, MsgSendTimeout)
 	defer cancel()
 
 	for _, client := range hub.activeUsers {

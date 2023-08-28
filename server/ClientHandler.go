@@ -12,7 +12,7 @@ import (
 )
 
 type Broadcaster interface {
-	BroadcastMessageWithTimeout(content string, sender Username) Response
+	BroadcastMessage(content string, sender Username, ctx context.Context) Response
 }
 
 type ClientHandler struct {
@@ -170,7 +170,7 @@ func (handler *ClientHandler) sendMsgsLoop(ctx context.Context) {
 				handler.errs <- input.Err
 				return
 			}
-			err := handler.dispatchUserInput(input.Val)
+			err := handler.dispatchUserInput(input.Val, ctx)
 			if err != nil {
 				handler.errs <- err
 				return
@@ -193,7 +193,7 @@ func parseInputMsg(input string) (id MsgID, msg string, ok bool) {
 	return id, msg, true
 }
 
-func (handler *ClientHandler) dispatchUserInput(input string) error {
+func (handler *ClientHandler) dispatchUserInput(input string, ctx context.Context) error {
 	id, msg, ok := parseInputMsg(input)
 	if !ok {
 		return ErrOddOutput
@@ -202,7 +202,7 @@ func (handler *ClientHandler) dispatchUserInput(input string) error {
 	if IsCmd(msg) {
 		return handler.dispatchCmd(UnserializeStrToCmd(msg))
 	} else {
-		response := handler.broadcaster.BroadcastMessageWithTimeout(msg, handler.Creds.Name)
+		response := handler.broadcaster.BroadcastMessage(msg, handler.Creds.Name, ctx)
 		return handler.forwardResponseToUser(id, response)
 	}
 }
